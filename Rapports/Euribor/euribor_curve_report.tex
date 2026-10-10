@@ -1,0 +1,532 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------------------------------------------------------------
+% Packages
+% ---------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage[expansion=false]{microtype}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{textcomp}
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, citecolor=blue!50!black, urlcolor=blue!50!black}
+
+\graphicspath{{figures/}}
+\setlength{\emergencystretch}{2em}
+
+\lstdefinestyle{pystyle}{
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{teal},
+    showstringspaces=false,
+    breaklines=true,
+    frame=single,
+    tabsize=4
+}
+
+% ---------------------------------------------------------------
+% Theorem environments and macros
+% ---------------------------------------------------------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\bp}{\,\mathrm{bp}}
+\newcommand{\eur}{\text{\texteuro}}
+\newcommand{\estr}{\text{\texteuro STR}}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+% Skeleton helpers : remove once the report is filled
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO:} #1\textbf{]}}}
+% \figslot{file}{width} : includes figures/file if it exists, otherwise draws a placeholder box
+\newcommand{\figslot}[2]{%
+    \IfFileExists{figures/#1}%
+        {\includegraphics[width=#2]{#1}}%
+        {\fbox{\parbox[c][0.25\textheight][c]{#2}{\centering\textcolor{red}{Figure to come: \texttt{\detokenize{#1}}}}}}}
+
+\title{\textbf{Construction of the EURIBOR 6M Curve:\\
+Dual-Curve Bootstrap on \texteuro STR Discounting and Tenor Basis}}
+\author{\textbf{Elias Benguedda}}
+\date{October 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper builds the EURIBOR 6M projection curve, the curve that gives the expected fixings of the floating leg of most euro interest rate swaps. Unlike \estr{}, EURIBOR is a term rate that contains a bank credit and liquidity premium, so its forwards cannot be read from the \estr{} curve: a separate projection curve is needed, while the cash flows are still discounted on the \estr{} curve built in the companion paper. We recall the EURIBOR methodology and conventions, the pricing of FRAs and swaps in the dual-curve framework, and why the floating leg no longer telescopes. The curve is bootstrapped given the \estr{} discount curve \todo{from proxy quotes: \estr{} proxy curve plus a EURIBOR--\estr{} basis measured from the published fixings, since EURIBOR swap quotes and daily fixings are not free}.
+
+\todo{Main results: repricing and validation, EURIBOR--\estr{} basis term structure, single-curve vs dual-curve pricing differences, 3M/6M tenor basis, par-point risks to both curves.} This paper is linked to my GitHub, which can be found on my portfolio\footnote{\url{https://portfolio-eliasbenguedda.fr}}, and all scripts are available in the same repository.
+\end{abstract}
+
+\clearpage
+
+\tableofcontents
+\newpage
+
+% ===============================================================
+\section{Introduction}
+\label{sec:intro}
+% ===============================================================
+
+\subsection{Motivation}
+\todo{EURIBOR is the reference index of most euro swaps, swaptions, caps and floors, floating-rate loans and structured products (callable range accruals). Before 2008 a single curve (the yield curve paper of this portfolio) both discounted and projected; since then the spreads between EURIBOR and overnight rates are material, and the market uses one discount curve (\estr{} for collateralized trades) and one projection curve per tenor (1M, 3M, 6M, 12M).}
+
+\todo{What changes with respect to the \estr{} curve: term rate fixed in advance instead of an overnight rate compounded in arrears; credit and liquidity premium; projection only (discounting stays on \estr{}); no step forwards on ECB dates, since a 6-month rate averages the policy path over six months; tenor-specific conventions.}
+
+\subsection{Organization of the paper}
+Section~\ref{sec:prelim} presents the EURIBOR rate and the dual-curve pricing of FRAs and swaps. Section~\ref{sec:data} describes the data. Section~\ref{sec:basis} measures the EURIBOR--\estr{} basis and builds the proxy quotes. Section~\ref{sec:single} bootstraps a single curve as a baseline. Section~\ref{sec:dual} builds the EURIBOR 6M projection curve on \estr{} discounting and validates it. Section~\ref{sec:single-vs-dual} measures the pricing impact of the dual-curve framework. Section~\ref{sec:tenor} adds the 3M curve and the tenor basis. Section~\ref{sec:risk} studies the par-point risk to both curves. Section~\ref{sec:limits} discusses the limitations, Section~\ref{sec:next-steps} lists next steps and Section~\ref{sec:conclusion} concludes. Appendix~\ref{app:code} gives excerpts of the Python implementation and Appendix~\ref{app:notation} the notation.
+
+\clearpage
+% ===============================================================
+\section{The EURIBOR Rate and the Dual-Curve Framework}
+\label{sec:prelim}
+% ===============================================================
+
+\subsection{The EURIBOR fixing}
+\todo{Administered by EMMI; hybrid methodology since 2019 (level 1: transactions, level 2: interpolations, level 3: model-based); panel of banks; tenors 1W, 1M, 3M, 6M, 12M; published at 11:00 CET for value spot ($T+2$). The rate of an unsecured term deposit between banks: credit and liquidity premium over the expected overnight rate.}
+
+\subsection{Term rate vs overnight rate}
+A EURIBOR fixing $L(T_s,T_e)$ is fixed at the start of the period and paid at its end. The \estr{} leg pays the overnight rate compounded in arrears, whose value is $P_d(0,T_s)-P_d(0,T_e)$ (companion paper). The difference
+\begin{equation}
+    L(T_s,T_e)-R^{\estr}(T_s,T_e)
+\end{equation}
+is the term basis: the premium for lending for six months to a bank rather than overnight. \todo{Order of magnitude, behaviour in stress periods (2008, 2011--2012, 2022).}
+
+\subsection{Projection curve and forwards}
+The projection curve is described by pseudo-discount factors $P_6(0,t)$, which are not prices but a convenient parametrization of the forward EURIBOR 6M rates:
+\begin{equation}
+    L_j(0)=\frac{1}{\delta_j}\Bigl(\frac{P_6(0,t_{j-1})}{P_6(0,t_j)}-1\Bigr),\qquad \delta_j=\frac{t_j-t_{j-1}}{360}.
+    \label{eq:fwd-libor}
+\end{equation}
+\todo{$L_j(0)$ is the expectation of the fixing under the $t_j$-forward measure associated with \estr{} discounting (no convexity adjustment for a payment at the end of the period).}
+
+\subsection{FRA and swap pricing}
+A FRA on $[T_1,T_2]$ has fair rate $F=L(0;T_1,T_2)$ from~\eqref{eq:fwd-libor}. A payer swap paying a fixed rate $K$ on the schedule $\{t^{\mathrm{fix}}_k\}$ and receiving EURIBOR 6M on $\{t_j\}$ has par rate
+\begin{equation}
+    S_6(T)=\frac{\sum_j\delta_j\,L_j(0)\,P_d(0,t_j)}{\sum_k\delta^{\mathrm{fix}}_k\,P_d(0,t^{\mathrm{fix}}_k)}.
+    \label{eq:par-dual}
+\end{equation}
+In the single-curve case $P_6=P_d$, the floating leg telescopes to $P_d(0,t_0)-P_d(0,t_n)$; in the dual-curve case it does not, and the projection curve has to be bootstrapped given the discount curve.
+
+\subsection{Conventions}
+\begin{table}[htbp]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+Item & EURIBOR 6M convention \\
+\midrule
+Calendar & TARGET2 \\
+Fixing & 11:00 CET, two business days before the start \\
+Spot lag & $T+2$ business days \\
+Floating leg & EURIBOR 6M, semi-annual, ACT/360 \\
+Fixed leg & annual, 30/360 \todo{check} \\
+Business day convention & modified following, end-of-month rule \todo{check} \\
+Short swaps & 1Y--2Y swaps often quoted against EURIBOR 3M \todo{check} \\
+Discounting & \estr{} (cleared swaps, cash collateral in EUR) \\
+\bottomrule
+\end{tabular}
+\caption{Market conventions of EURIBOR 6M swaps. \todo{Verify against the ISDA / market documentation.}}
+\label{tab:conventions}
+\end{table}
+
+\clearpage
+% ===============================================================
+\section{Data}
+\label{sec:data}
+% ===============================================================
+
+\subsection{EURIBOR fixings}
+\todo{\texttt{Euribor\_Monthly.csv}: monthly averages of the daily fixings for 1M, 3M, 6M, 12M since January 2015 (ECB, \texttt{FM} dataset). Daily fixings are published by EMMI under licence and are not free: the fixing on the valuation date is not available exactly.}
+
+\begin{figure}[htbp]
+    \centering
+    \figslot{euribor_fixings.png}{\textwidth}
+    \caption{EURIBOR 1M, 3M, 6M, 12M (monthly averages) and \estr{}. \todo{}}
+    \label{fig:fixings}
+\end{figure}
+
+\subsection{Discount curve: \texteuro STR}
+\todo{\estr{} curve of the companion paper (meeting steps up to 2 years, raw beyond), same valuation date; built on proxy quotes.}
+
+\subsection{Market quotes}
+\todo{EURIBOR 6M swaps, FRAs and EURIBOR 3M futures are not free. Template \texttt{EURIBOR6M\_Quotes\_TEMPLATE.csv} to fill by hand; otherwise proxy quotes (Section~\ref{sec:basis}). The EURIBOR 6M zero curve of 12/02/2025 used in the Heston and yield curve papers is a single-curve curve at another date.}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lrlrlr@{}}
+\toprule
+Instrument & Rate (\%) & Instrument & Rate (\%) & Instrument & Rate (\%) \\
+\midrule
+6M fixing & \todo{} & FRA $12\times18$ & \todo{} & IRS 5Y & \todo{} \\
+FRA $1\times7$ & \todo{} & IRS 2Y & \todo{} & IRS 10Y & \todo{} \\
+FRA $3\times9$ & \todo{} & IRS 3Y & \todo{} & IRS 20Y & \todo{} \\
+FRA $6\times12$ & \todo{} & IRS 4Y & \todo{} & IRS 30Y & \todo{} \\
+\bottomrule
+\end{tabular}
+\caption{EURIBOR 6M curve instruments on \todo{valuation date}.}
+\label{tab:quotes}
+\end{table}
+
+\clearpage
+% ===============================================================
+\section{EURIBOR--\texteuro STR Basis and Proxy Quotes}
+\label{sec:basis}
+% ===============================================================
+
+\subsection{Measuring the basis}
+\todo{Two measures, as for the government--OIS basis of the companion paper: (a) ex post, EURIBOR 6M fixing minus \estr{} compounded over the following six months (mixes the basis with forecast errors); (b) contemporaneous, EURIBOR 6M fixing minus the 6M \estr{} OIS rate of the same date (depends on the \estr{} proxy). Monthly averages only.}
+
+\begin{figure}[htbp]
+    \centering
+    \figslot{euribor_estr_basis.png}{\textwidth}
+    \caption{EURIBOR 6M minus \estr{} over the same period. \todo{}}
+    \label{fig:basis}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Year & 1M (bp) & 3M (bp) & 6M (bp) & 12M (bp) \\
+\midrule
+\todo{} & & & & \\
+\bottomrule
+\end{tabular}
+\caption{Average EURIBOR--\estr{} basis by tenor and year.}
+\label{tab:basis}
+\end{table}
+
+\subsection{Term structure of the basis}
+\todo{The basis is quoted only at the fixing tenor; for longer maturities (forward 6M periods), assumption needed: flat, mean-reverting to a long-term level, or read from \estr{}/EURIBOR basis swaps if available.}
+
+\subsection{Proxy projection curve and quotes}
+\todo{Forward EURIBOR 6M $=$ forward compounded \estr{} over the period (from the \estr{} curve) $+$ basis $s(t)$; proxy FRA and swap quotes $=$ par rates~\eqref{eq:par-dual} on this curve with \estr{} discounting.}
+
+\clearpage
+% ===============================================================
+\section{Single-Curve Bootstrap (Baseline)}
+\label{sec:single}
+% ===============================================================
+
+\todo{Same instruments bootstrapped in the single-curve framework of the yield curve paper (the EURIBOR curve discounts and projects). Baseline for Section~\ref{sec:single-vs-dual}; checks the instruments (FRA, IRS with 30/360 fixed and ACT/360 floating legs) with the existing \texttt{Bootstrapper}.}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Method & Max residual (bp) & Solver & Time (ms) \\
+\midrule
+Raw & \todo{} & sequential & \todo{} \\
+Monotone convex & \todo{} & simultaneous & \todo{} \\
+\bottomrule
+\end{tabular}
+\caption{Single-curve bootstrap of the EURIBOR 6M instruments.}
+\label{tab:single}
+\end{table}
+
+\clearpage
+% ===============================================================
+\section{Dual-Curve Bootstrap on \texteuro STR Discounting}
+\label{sec:dual}
+% ===============================================================
+
+\subsection{Instruments}
+\begin{table}[htbp]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Instrument & Quote & Pricing equation \\
+\midrule
+EURIBOR 6M fixing & rate $L_0$ & $1+L_0\,\delta=P_6(0,T_0)/P_6(0,T_0+6\mathrm{M})$ \\
+FRA $[T_1,T_2]$ & rate $F$ & $1+F\,\delta=P_6(0,T_1)/P_6(0,T_2)$ \\
+EURIBOR 3M future & price $100-F$ & FRA rate $+$ convexity adjustment \todo{} \\
+IRS vs 6M & par rate $S_6$ & equation~\eqref{eq:par-dual}, $P_d$ fixed \\
+\bottomrule
+\end{tabular}
+\caption{Instruments of the EURIBOR 6M projection curve.}
+\label{tab:instruments}
+\end{table}
+
+\todo{New instrument classes holding a reference to the discount curve; \texttt{implied\_quote(curve)} takes the projection curve only, so the existing \texttt{Bootstrapper} solves for $P_6$ unchanged.}
+
+\subsection{Pillars and interpolation}
+\todo{Pillars at the end of the last projected period of each instrument (6M fixing, FRA end dates, swap maturities). Interpolate the projection curve itself, or the spread over the \estr{} forwards (the \estr{} steps of the ECB meetings then pass into the EURIBOR forwards, and only the smoother basis is interpolated). Comparison raw / monotone convex / spread interpolation.}
+
+\begin{figure}[htbp]
+    \centering
+    \figslot{projection_forwards.png}{\textwidth}
+    \caption{Forward EURIBOR 6M rates $L(t,t+6\mathrm{M})$ and forward compounded \estr{} over the same periods. \todo{}}
+    \label{fig:forwards}
+\end{figure}
+
+\subsection{Solver}
+\todo{Sequential (raw) or simultaneous (non-local) solve for the pseudo zero rates of $P_6$, $P_d$ fixed; starting point: single-curve solution.}
+
+\subsection{Validation}
+\begin{enumerate}[label=(\arabic*)]
+    \item \textbf{Repricing}: all instruments, maximum residual below $10^{-6}\bp$. \todo{}
+    \item \textbf{Independent repricing}: swap PVs recomputed leg by leg; comparison with QuantLib~\cite{quantlib} (\texttt{SwapRateHelper} with an exogenous discounting curve). \todo{}
+    \item \textbf{Exact round trip}: quotes generated from known $(P_d,P_6)$, projection curve recovered to machine precision. \todo{}
+    \item \textbf{Consistency}: setting $P_d=P_6$ gives back the single-curve bootstrap of Section~\ref{sec:single}. \todo{}
+    \item \textbf{Basis}: forward EURIBOR minus forward \estr{} positive and plausible at all maturities. \todo{}
+\end{enumerate}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Test & Criterion & Result \\
+\midrule
+Repricing & $\max|R_k|<10^{-6}\bp$ & \todo{} \\
+Independent repricing / QuantLib & $<\todo{0.01}\bp$ & \todo{} \\
+Exact round trip & machine precision & \todo{} \\
+$P_d=P_6$ & single-curve result & \todo{} \\
+Basis & positive, plausible & \todo{} \\
+\bottomrule
+\end{tabular}
+\caption{Validation tests of the dual-curve bootstrap.}
+\label{tab:validation}
+\end{table}
+
+\clearpage
+% ===============================================================
+\section{Single-Curve vs Dual-Curve Pricing}
+\label{sec:single-vs-dual}
+% ===============================================================
+
+\todo{Both frameworks reprice the par swaps; they differ on everything else: off-market swaps, forward-starting swaps, FRAs between pillars, swaptions and caps (annuity and forwards). Price differences in bp of notional for a few instruments; differences between the projection curve and the single curve.}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Instrument & Single curve & Dual curve & Difference \\
+\midrule
+\todo{} & & & \\
+\bottomrule
+\end{tabular}
+\caption{Prices of test instruments in the single-curve and dual-curve frameworks.}
+\label{tab:single-vs-dual}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \figslot{single_vs_dual.png}{\textwidth}
+    \caption{Single-curve EURIBOR curve vs dual-curve projection and discount curves. \todo{}}
+    \label{fig:single-vs-dual}
+\end{figure}
+
+\clearpage
+% ===============================================================
+\section{Tenor Basis: the EURIBOR 3M Curve}
+\label{sec:tenor}
+% ===============================================================
+
+\todo{EURIBOR 3M projection curve from 3M fixings, futures and 3s6s basis swaps; 3M/6M basis $L_6-L_3$ (longer tenor, higher premium); short swaps quoted against 3M. Optional if the 3M quotes are not available.}
+
+\begin{figure}[htbp]
+    \centering
+    \figslot{tenor_basis.png}{\textwidth}
+    \caption{EURIBOR 3M and 6M forward curves and tenor basis. \todo{}}
+    \label{fig:tenor}
+\end{figure}
+
+\clearpage
+% ===============================================================
+\section{Risk: Par-Point Sensitivities to Both Curves}
+\label{sec:risk}
+% ===============================================================
+
+\todo{Sensitivities of a EURIBOR 6M swap (and an 18m $\times$ 4y forward swap) to the \estr{} OIS quotes and to the EURIBOR quotes, by re-bootstrapping both curves; the projection curve depends on the discount curve, so a bump of an OIS quote moves both. Basis risk vs outright rate risk; Jacobian method as next step.}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Quote bumped & DV01 (EUR) & of which via projection \\
+\midrule
+\estr{} OIS \todo{} & & \\
+EURIBOR 6M \todo{} & & \\
+\midrule
+Parallel $+1\bp$ (both curves) & \todo{} & \\
+\bottomrule
+\end{tabular}
+\caption{Par-point DV01 of a test swap to the \estr{} and EURIBOR 6M quotes.}
+\label{tab:risk}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \figslot{key_rates.png}{\textwidth}
+    \caption{Par-point sensitivities to the \estr{} and EURIBOR 6M quotes. \todo{}}
+    \label{fig:keyrates}
+\end{figure}
+
+\clearpage
+% ===============================================================
+\section{Limitations}
+\label{sec:limits}
+% ===============================================================
+
+\paragraph{Proxy quotes.} \todo{Proxy \estr{} curve plus a basis measured on monthly averages; term structure of the basis assumed.}
+
+\paragraph{Fixings.} \todo{Daily EURIBOR fixings not available; today's 6M fixing approximated.}
+
+\paragraph{Futures.} \todo{Convexity adjustment model-dependent (Hull--White).}
+
+\paragraph{Conventions.} \todo{30/360 fixed leg, end-of-month rule, stub periods.}
+
+\paragraph{Framework.} \todo{Deterministic basis; collateral in EUR cash; EURIBOR fallback to \estr{} not modelled.}
+
+% ===============================================================
+\section{Next Steps}
+\label{sec:next-steps}
+% ===============================================================
+
+\begin{itemize}
+    \item \todo{Real quotes: fill \texttt{EURIBOR6M\_Quotes\_YYYYMMDD.csv}.}
+    \item \todo{EURIBOR 1M and 12M curves; basis swaps.}
+    \item \todo{Simultaneous bootstrap of the \estr{} and EURIBOR curves from IRS and \estr{}/EURIBOR basis swaps (long end of the \estr{} curve from EURIBOR swaps).}
+    \item \todo{Hull--White calibration on the dual-curve setup and pricing of swaptions, caps and the callable range accrual.}
+    \item \todo{Daily history and principal component analysis of the EURIBOR--\estr{} basis.}
+\end{itemize}
+
+% ===============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% ===============================================================
+
+\todo{Summary of the construction, of the basis, of the single vs dual-curve differences and of the risk.}
+
+\clearpage
+
+% ===============================================================
+\appendix
+\section{Python Implementation (Excerpts)}
+\label{app:code}
+% ===============================================================
+
+The following listings are excerpts of the implementation (package \texttt{Fixed\_Income\_Models}), slightly simplified. The full scripts and the notebook \texttt{euribor\_curve.ipynb} are available on GitHub.
+
+\subsection{Dual-curve instruments}
+\begin{lstlisting}[style=pystyle]
+# TODO : FRA and IRS classes holding the ESTR discount curve, implied_quote(projection_curve)
+\end{lstlisting}
+
+\subsection{Basis measurement and proxy quotes}
+\begin{lstlisting}[style=pystyle]
+# TODO
+\end{lstlisting}
+
+\subsection{Dual-curve bootstrap}
+\begin{lstlisting}[style=pystyle]
+# TODO : Bootstrapper on the projection curve, discount curve fixed
+\end{lstlisting}
+
+\section{Notation}
+\label{app:notation}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lp{11.5cm}@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$P_d(0,t)$ & \estr{} discount factor \\
+$P_6(0,t),\ P_3(0,t)$ & Pseudo-discount factors of the EURIBOR 6M and 3M projection curves \\
+$L(T_s,T_e),\ L_j(0)$ & EURIBOR fixing of the period $[T_s,T_e]$ and forward EURIBOR of period $j$ \\
+$R^{\estr}(T_s,T_e)$ & \estr{} compounded over $[T_s,T_e]$ \\
+$s(t)$ & EURIBOR--\estr{} basis \\
+$\delta_j,\ \delta^{\mathrm{fix}}_k$ & ACT/360 floating and 30/360 fixed accrual fractions \\
+$S_6(T)$ & Par rate of a EURIBOR 6M swap \\
+$q_k,\ R_k,\ z$ & Market quotes, residuals and bootstrap unknowns \\
+\bottomrule
+\end{tabular}
+\caption{Main notation.}
+\label{tab:notation}
+\end{table}
+
+\clearpage
+
+% ===============================================================
+\begin{thebibliography}{99}
+% ===============================================================
+
+\bibitem{data}
+ECB data,
+\textit{\url{https://data.ecb.europa.eu}}
+
+\bibitem{emmi}
+European Money Markets Institute,
+\textit{Hybrid methodology for EURIBOR},
+Available at: \url{https://www.emmi-benchmarks.eu}
+
+\bibitem{haganwest2006}
+P. S. Hagan and G. West,
+\textit{Interpolation methods for curve construction},
+Applied Mathematical Finance, 13(2):89--129, 2006.
+
+\bibitem{ametrano}
+F. M. Ametrano and M. Bianchetti,
+\textit{Everything you always wanted to know about multiple interest rate curve bootstrapping but were afraid to ask},
+SSRN Working Paper 2219548, 2013.
+
+\bibitem{henrard}
+M. Henrard,
+\textit{Interest Rate Modelling in the Multi-Curve Framework},
+Palgrave Macmillan, 2014.
+
+\bibitem{mercurio}
+F. Mercurio,
+\textit{Interest rates and the credit crunch: new formulas and market models},
+Bloomberg Portfolio Research Paper 2009-01-FRONTIERS, 2009.
+
+\bibitem{andersenpiterbarg}
+L. B. G. Andersen and V. V. Piterbarg,
+\textit{Interest Rate Modeling, Volume I: Foundations and Vanilla Models},
+Atlantic Financial Press, 2010.
+
+\bibitem{quantlib}
+\textit{QuantLib, a free/open-source library for quantitative finance},
+Available at: \url{https://www.quantlib.org}
+
+\bibitem{yieldcurve}
+E. Benguedda,
+\textit{Yield Curve Construction: Interpolation, Bootstrapping and Curve Risk},
+2026.
+
+\bibitem{estrcurve}
+E. Benguedda,
+\textit{Construction of the \texteuro STR Curve: OIS Bootstrap, ECB Meeting Dates and Proxy Quotes},
+2026.
+
+\end{thebibliography}
+
+\end{document}
