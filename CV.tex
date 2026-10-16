@@ -1,0 +1,111 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{newtxtext,newtxmath}
+\usepackage[a4paper,top=1.1cm,bottom=1.0cm,left=1.5cm,right=1.5cm]{geometry}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\pdfgentounicode=1 % ATS: makes the PDF text extractable and searchable
+\hypersetup{pdftitle={Elias Benguedda Lauzon - CV - Quantitative Research Intern},
+  pdfauthor={Elias Benguedda Lauzon},
+  pdfkeywords={Quantitative Research, Derivatives Pricing, Structured Products, Stochastic Volatility, Monte Carlo, Fixed Income, Python}}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\tabcolsep}{0pt}
+
+\titleformat{\section}{\large\bfseries\scshape}{}{0pt}{}[\vspace{-3pt}\titlerule]
+\titlespacing*{\section}{0pt}{7pt}{4pt}
+\setlist[itemize]{leftmargin=12pt,itemsep=0pt,topsep=1pt,parsep=0pt,partopsep=0pt,label=\textbullet,after=\vspace{3pt}}
+
+% \entry{Company, City}{Dates}{Title}
+\newcommand{\entry}[3]{%
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}l r}
+    \textbf{#1} & \textbf{#2} \\
+    \textit{#3} & \\
+  \end{tabular*}\vspace{-2pt}}
+% \edu{School}{Dates}{Degree}{Coursework}
+\newcommand{\edu}[4]{%
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}l r}
+    \textbf{#1} & \textbf{#2} \\
+    \textit{#3} & \\[1pt]
+    \multicolumn{2}{@{\hspace{12pt}}l}{\small #4} \\
+  \end{tabular*}\par\vspace{2pt}}
+% \project{Title}{Keywords}
+\definecolor{linkblue}{RGB}{0,70,160}
+\newcommand{\portfolio}[1]{\href{https://portfolio-eliasbenguedda.fr}{\textcolor{linkblue}{#1}}}
+\newcommand{\project}[2]{\textbf{#1} \textendash{} \textit{#2}\vspace{-1pt}}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries BENGUEDDA LAUZON Elias}\\[2pt]
+   \href{mailto:bengueddalauzon.elias@gmail.com}{bengueddalauzon.elias@gmail.com} \textbar{} (+33) 6 69 08 91 00\\
+  \href{https://linkedin.com/in/elias-benguedda}{linkedin.com/in/elias-benguedda} \textbar{}
+  \portfolio{portfolio-eliasbenguedda.fr} \textbar{}
+  \href{https://github.com/bengueddalauzonelias}{github.com/bengueddalauzonelias}\\[3pt]
+  \vspace{4pt}\textbf{Seeking a 6-month Trading / Quant Research internship (gap year) from January 2027}
+\end{center}
+\vspace{-6pt}
+
+% ============================================================
+\section{Professional Experience}
+
+\entry{Société Générale \textendash{} Pricing Team, Paris}{Jun 2026 \textendash{} Dec 2026}{Quantitative Research Intern \textendash{} Derivatives Pricing}
+\begin{itemize}
+  \item Priced callable bonds under Hull--White 1F: Jamshidian decomposition (European), Monte Carlo + Longstaff--Schwartz (Bermudan, American)
+  \item Built and backtested correlation models (EWMA, DCC-GARCH, Ornstein--Uhlenbeck) to price Worst-of/Best-of; EWMA adopted by the desk
+\end{itemize}
+
+\entry{Natixis Trading Solutions, Paris}{Summer 2025}{Quantitative Intern \textendash{} Equity \& FICC}
+\begin{itemize}
+  \item Built automated Python pipelines for daily P\&L monitoring and position tracking on the trading floor
+  \item Developed performance analysis tools on equity derivatives data
+\end{itemize}
+
+
+% ============================================================
+\section{Quantitative Projects\hfill\normalfont\normalsize All papers \& code on \portfolio{\textbf{portfolio-eliasbenguedda.fr}}}
+
+\project{Heston Stochastic Volatility Calibration}{CAC40 options, Python, SciPy}
+\begin{itemize}
+  \item Calibrated \textbf{Heston} to 142 CAC40 options via semi-closed Fourier formula (Lewis, Carr--Madan FFT, COS): IV RMSE 0.42
+  \item Bootstrapped the forward and dividend curve from put--call parity; time-dependent extension: RMSE 0.12
+\end{itemize}
+
+\project{Yield Curve Construction}{\texteuro STR, EURIBOR, US Treasuries}
+\begin{itemize}
+  \item Bootstrapped OIS and dual-curve EURIBOR curves, validated against QuantLib; 7 interpolation methods compared (monotone convex, Nelson--Siegel--Svensson)
+  \item \textbf{PCA} on 181 Treasury curves (level, slope, curvature) and key-rate DV01 risk
+\end{itemize}
+
+\project{Autocallable Notes Pricer}{Athena, Phoenix, Monte Carlo}
+\begin{itemize}
+  \item Monte Carlo pricer under calibrated Heston with variance reduction (antithetic, control variate), Brownian bridge
+  \item Fair coupons, scenario statistics and Greeks (vega, dividends) of 35 product variants
+\end{itemize}
+
+
+% ============================================================
+\section{Education}
+
+\edu{Mines Saint-Étienne (Grande École d'ingénieurs), France}{2024 \textendash{} 2028}{MEng Applied Mathematics \& Data Science (gap year 2026--2027)}{Probability, stochastic processes, optimization, machine learning, statistical modelling}
+
+\edu{Aix-Marseille University, France}{2025 \textendash{} 2026}{Master in Fundamental Mathematics}{Stochastic calculus, PDEs, numerical methods, measure theory}
+
+\edu{École Normale Supérieure de Lyon (ENS), France}{2025 \textendash{} 2026}{Advanced Courses in Machine Learning \& Stochastic Modelling}{Reinforcement learning, probabilistic modelling, convex optimization, statistical learning theory}
+
+\edu{Lycée Janson de Sailly, Paris}{2022 \textendash{} 2024}{Classes Préparatoires MPSI/MP (Mathematics \& Physics)}{Intensive training in mathematics, physics and computer science for the Grandes Écoles entrance exams}
+
+% ============================================================
+\section{Skills \& Interests}
+\begin{itemize}
+  \item \textbf{Programming:} Python (NumPy, SciPy, Pandas, PyTorch, scikit-learn), QuantLib, SQL, Git, LaTeX, C\# (basics), C++ (basics)
+  \item \textbf{Tools:} Numerix, Bloomberg
+  \item \textbf{Languages:} French (Native), English (Fluent), Spanish (Basic)
+  \item \textbf{Interests:} Karting (French National Championship), Aviation (student pilot)
+\end{itemize}
+
+\end{document}
