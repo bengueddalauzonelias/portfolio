@@ -83,26 +83,73 @@ their hedging delicate, and dedicated pricers are required.
 \subsection{Outline}
 
 Section~\ref{sec:products} describes the products and their model-free
-properties. Section~\ref{sec:bs} derives their prices under the Black--Scholes
-model, which serves as a benchmark. Section~\ref{sec:data} presents the market
-data and the calibrated model used in the rest of the paper.
-Section~\ref{sec:heston} prices digital options under the Heston model,
+properties, and derives the closed-form prices and Greeks of European digital
+options under the Black--Scholes model, which serves as a benchmark.
+Section~\ref{sec:data} presents the market data and the calibrated model used
+in the rest of the paper. Section~\ref{sec:american} prices American digital options and
+Section~\ref{sec:bermudan} Bermudan digital options.
 Section~\ref{sec:greeks} studies their Greeks and Section~\ref{sec:hedging}
 their hedging.
 
 % ==================================================================
-\section{Digital Options}
+\section{Digital Options and European Pricing}
 \label{sec:products}
 % ==================================================================
 
 Digital options, also called binary options, pay a fixed coupon when a trigger
 event occurs. There are two kinds of digital options: cash-or-nothing (CON) and
 asset-or-nothing (AON) options. Many underlyings are possible, such as a single
-stock, an index or a basket. To keep the descriptions simple, we present the
-call versions; the put versions are treated in the associated notebook. In the
-following, $K$ denotes the trigger level (or strike) and $Q$ the cash amount.
+stock, an index or a basket. To keep the descriptions simple, we focus on the
+call versions; the put versions follow by parity and are treated in the
+associated notebook. In the following, $K$ denotes the trigger level (or
+strike) and $Q$ the cash amount.
 
+European digital options admit closed-form prices in the Black--Scholes
+framework~\cite{BlackScholes1973,Merton1973}. We derive them together with the
+description of the products; they serve as a benchmark for the stochastic
+volatility results of Sections~\ref{sec:american} and~\ref{sec:bermudan}. The section ends with a
+discussion of why these formulas are not sufficient for equity-index digitals.
+
+% Figures use a logistic approximation of N(x) (max error ~1e-4),
+% since pgfmath has no built-in normal CDF.
+
+% ---------------------------------------------------------------------
+\subsection{Model and Notation}
+\label{subsec:bs-model}
+
+Let $S_t$ denote the level of the underlying index. Under the risk-neutral
+measure $\mathbb{Q}$, the index follows
+\begin{equation}
+  \mathrm{d}S_t = (r-q)\,S_t\,\mathrm{d}t + \sigma\,S_t\,\mathrm{d}W_t,
+  \label{eq:bs-sde}
+\end{equation}
+where $r$ is the constant risk-free rate, $q$ the continuous dividend yield,
+$\sigma$ the constant volatility and $W$ a standard Brownian motion. We write
+$\tau = T-t$ for the time to maturity, $\nu = r - q - \tfrac{1}{2}\sigma^2$ for
+the drift of $\ln S_t$, and
+\begin{equation}
+  d_1 = \frac{\ln(S_t/K) + \left(r - q + \tfrac{1}{2}\sigma^2\right)\tau}{\sigma\sqrt{\tau}},
+  \qquad
+  d_2 = d_1 - \sigma\sqrt{\tau}.
+  \label{eq:d1d2}
+\end{equation}
+$N(\cdot)$ and $n(\cdot)$ denote the standard normal cumulative distribution
+and density functions. Two probabilities appear throughout this section:
+\begin{equation}
+  \mathbb{Q}\left(S_T \geq K \mid \mathcal{F}_t\right) = N(d_2),
+  \qquad
+  \mathbb{Q}^S\left(S_T \geq K \mid \mathcal{F}_t\right) = N(d_1),
+  \label{eq:probas}
+\end{equation}
+where $\mathbb{Q}^S$ is the share measure, defined by
+\begin{equation}
+  \left.\frac{\mathrm{d}\mathbb{Q}^S}{\mathrm{d}\mathbb{Q}}\right|_{\mathcal{F}_T}
+  = \frac{S_T\, e^{-(r-q)T}}{S_0}.
+\end{equation}
+
+% ---------------------------------------------------------------------
 \subsection{Cash-or-Nothing Options}
+\label{subsec:con}
 
 The European CON call is the simplest digital option. It pays the cash amount
 $Q$ at maturity if the underlying finishes above the strike
@@ -111,6 +158,7 @@ $Q$ at maturity if the underlying finishes above the strike
   \mathrm{CON}_T = Q\,\ind_{\{S_T \geq K\}}.
   \label{eq:con-payoff}
 \end{equation}
+The CON put pays $Q\,\ind_{\{S_T < K\}}$ instead.
 
 \begin{figure}[htbp]
 \centering
@@ -139,7 +187,17 @@ $Q$ at maturity if the underlying finishes above the strike
 \label{fig:payoff-con}
 \end{figure}
 
+The price of a CON option is the discounted risk-neutral probability of
+finishing in the money:
+\begin{align}
+  D^{c}(S_t,K,\tau) &= e^{-r\tau}\,\mathbb{E}^{\mathbb{Q}}\!\left[Q\,\mathbf{1}_{\{S_T \geq K\}} \mid \mathcal{F}_t\right]
+                     = Q\,e^{-r\tau}\,N(d_2), \label{eq:cash-call}\\
+  D^{p}(S_t,K,\tau) &= Q\,e^{-r\tau}\,N(-d_2). \label{eq:cash-put}
+\end{align}
+
+% ---------------------------------------------------------------------
 \subsection{Asset-or-Nothing Options}
+\label{subsec:aon}
 
 The European AON call pays the value of the underlying at maturity if this
 value is above the strike (Figure~\ref{fig:payoff-aon}):
@@ -147,6 +205,7 @@ value is above the strike (Figure~\ref{fig:payoff-aon}):
   \mathrm{AON}_T = S_T\,\ind_{\{S_T \geq K\}}.
   \label{eq:aon-payoff}
 \end{equation}
+The AON put pays $S_T\,\ind_{\{S_T < K\}}$ instead.
 
 \begin{figure}[htbp]
 \centering
@@ -175,40 +234,41 @@ value is above the strike (Figure~\ref{fig:payoff-aon}):
 \label{fig:payoff-aon}
 \end{figure}
 
-\subsection{Exercise Styles and Touch Options}
+Changing numeraire to the share measure gives
+\begin{align}
+  A^{c}(S_t,K,\tau) &= e^{-r\tau}\,\mathbb{E}^{\mathbb{Q}}\!\left[S_T\,\mathbf{1}_{\{S_T \geq K\}} \mid \mathcal{F}_t\right]
+                     = S_t\,e^{-q\tau}\,N(d_1), \label{eq:asset-call}\\
+  A^{p}(S_t,K,\tau) &= S_t\,e^{-q\tau}\,N(-d_1). \label{eq:asset-put}
+\end{align}
 
-Both CON and AON options also exist in American and Bermudan versions, in which
-the trigger is monitored not only at maturity but continuously, or on a
-discrete set of dates, before maturity. Contracts typically specify a
-monitoring of the trigger at each daily close. The coupon may then be paid
-either when the trigger is hit or at maturity. As always for early-exercise
-products, such options are harder to price because the exercise time is
-unknown.
+% ---------------------------------------------------------------------
+\subsection{Parity Relations and Static Decomposition}
 
-Path-dependent digitals come in several types:
-\begin{enumerate}
-  \item \textbf{One-touch:} pays if and only if the barrier is touched, either
-        immediately or at maturity;
-  \item \textbf{No-touch:} pays if and only if the barrier is never touched;
-  \item \textbf{Double one-touch:} two barriers, pays if and only if either
-        barrier is touched;
-  \item \textbf{Double no-touch:} two barriers, pays if and only if neither
-        barrier is touched.
-\end{enumerate}
-Their prices under the Black--Scholes model are derived in
-Sections~\ref{subsec:bs-american} and~\ref{subsec:bs-bermudan}.
-
-\subsection{Static Decomposition of the Vanilla Call}
-
-The payoff of a vanilla call decomposes into digital payoffs:
+Since the call and put payoffs sum to a constant, the following parity
+relations hold in any arbitrage-free model:
+\begin{equation}
+  D^{c} + D^{p} = Q\,e^{-r\tau},
+  \qquad
+  A^{c} + A^{p} = S_t\,e^{-q\tau}.
+  \label{eq:digital-parity}
+\end{equation}
+Moreover, the payoff of a vanilla call decomposes into digital payoffs:
 \begin{equation}
   (S_T - K)^+ = S_T\,\ind_{\{S_T \geq K\}} - K\,\ind_{\{S_T \geq K\}}.
 \end{equation}
 By absence of arbitrage, a vanilla call is therefore worth an asset-or-nothing
-call minus $K$ cash-or-nothing calls with $Q=1$, in any model. This relation is
-made explicit under Black--Scholes in~\eqref{eq:vanilla-decomposition}.
+call minus $K$ cash-or-nothing calls with $Q=1$, in any model. Under
+Black--Scholes,
+\begin{equation}
+  C(S_t,K,\tau) = A^{c}(S_t,K,\tau) - K\,D^{c}(S_t,K,\tau)
+               = S_t\,e^{-q\tau}N(d_1) - K\,e^{-r\tau}N(d_2),
+  \label{eq:vanilla-decomposition}
+\end{equation}
+which recovers the Black--Scholes formula. Digital options are therefore the
+elementary building blocks of vanilla options.
 
-\subsection{Replication by Call Spreads}
+% ---------------------------------------------------------------------
+\subsection{Replication by Call Spreads and the Role of the Smile}
 \label{subsec:call-spread}
 
 A digital option can be seen as the limit of a call spread~\cite{Bouzoubaa2010}.
@@ -265,109 +325,7 @@ call spread strikes are to the digital strike, the closer the payoff.}
 \label{fig:digital-callspread}
 \end{figure}
 
-% ==================================================================
-\section{Pricing under the Black--Scholes Model}
-\label{sec:bs}
-% ==================================================================
-
-This section derives the prices of digital options in the Black--Scholes
-framework~\cite{BlackScholes1973,Merton1973} for the three exercise styles
-studied in this paper: European, American and Bermudan. Closed-form or
-semi-closed-form expressions are available in each case, which makes the model
-a natural benchmark for the stochastic volatility results of
-Section~\ref{sec:heston}. The section ends with a discussion of why these
-formulas are not sufficient for equity-index digitals.
-
-% Figures use a logistic approximation of N(x) (max error ~1e-4),
-% since pgfmath has no built-in normal CDF.
-
-% ---------------------------------------------------------------------
-\subsection{Model and Notation}
-\label{subsec:bs-model}
-
-Let $S_t$ denote the level of the underlying index. Under the risk-neutral
-measure $\mathbb{Q}$, the index follows
-\begin{equation}
-  \mathrm{d}S_t = (r-q)\,S_t\,\mathrm{d}t + \sigma\,S_t\,\mathrm{d}W_t,
-  \label{eq:bs-sde}
-\end{equation}
-where $r$ is the constant risk-free rate, $q$ the continuous dividend yield,
-$\sigma$ the constant volatility and $W$ a standard Brownian motion. We write
-$\tau = T-t$ for the time to maturity, $\nu = r - q - \tfrac{1}{2}\sigma^2$ for
-the drift of $\ln S_t$, and
-\begin{equation}
-  d_1 = \frac{\ln(S_t/K) + \left(r - q + \tfrac{1}{2}\sigma^2\right)\tau}{\sigma\sqrt{\tau}},
-  \qquad
-  d_2 = d_1 - \sigma\sqrt{\tau}.
-  \label{eq:d1d2}
-\end{equation}
-$N(\cdot)$ and $n(\cdot)$ denote the standard normal cumulative distribution
-and density functions. Two probabilities appear throughout this section:
-\begin{equation}
-  \mathbb{Q}\left(S_T \geq K \mid \mathcal{F}_t\right) = N(d_2),
-  \qquad
-  \mathbb{Q}^S\left(S_T \geq K \mid \mathcal{F}_t\right) = N(d_1),
-  \label{eq:probas}
-\end{equation}
-where $\mathbb{Q}^S$ is the share measure, defined by
-\begin{equation}
-  \left.\frac{\mathrm{d}\mathbb{Q}^S}{\mathrm{d}\mathbb{Q}}\right|_{\mathcal{F}_T}
-  = \frac{S_T\, e^{-(r-q)T}}{S_0}.
-\end{equation}
-
-% ---------------------------------------------------------------------
-\subsection{European Digital Options}
-\label{subsec:bs-european}
-
-\subsubsection{Cash-or-Nothing Options}
-
-A cash-or-nothing call (resp.\ put) with strike $K$ and cash amount $Q$ pays
-$Q\,\mathbf{1}_{\{S_T \geq K\}}$ (resp.\ $Q\,\mathbf{1}_{\{S_T < K\}}$) at
-maturity. Its price is the discounted risk-neutral probability of finishing in
-the money:
-\begin{align}
-  D^{c}(S_t,K,\tau) &= e^{-r\tau}\,\mathbb{E}^{\mathbb{Q}}\!\left[Q\,\mathbf{1}_{\{S_T \geq K\}} \mid \mathcal{F}_t\right]
-                     = Q\,e^{-r\tau}\,N(d_2), \label{eq:cash-call}\\
-  D^{p}(S_t,K,\tau) &= Q\,e^{-r\tau}\,N(-d_2). \label{eq:cash-put}
-\end{align}
-
-\subsubsection{Asset-or-Nothing Options}
-
-An asset-or-nothing call (resp.\ put) pays $S_T\,\mathbf{1}_{\{S_T \geq K\}}$
-(resp.\ $S_T\,\mathbf{1}_{\{S_T < K\}}$). Changing numeraire to the share
-measure gives
-\begin{align}
-  A^{c}(S_t,K,\tau) &= e^{-r\tau}\,\mathbb{E}^{\mathbb{Q}}\!\left[S_T\,\mathbf{1}_{\{S_T \geq K\}} \mid \mathcal{F}_t\right]
-                     = S_t\,e^{-q\tau}\,N(d_1), \label{eq:asset-call}\\
-  A^{p}(S_t,K,\tau) &= S_t\,e^{-q\tau}\,N(-d_1). \label{eq:asset-put}
-\end{align}
-
-\subsubsection{Parity Relations and Static Decomposition}
-
-Since the call and put payoffs sum to a constant, the following parity
-relations hold in any arbitrage-free model:
-\begin{equation}
-  D^{c} + D^{p} = Q\,e^{-r\tau},
-  \qquad
-  A^{c} + A^{p} = S_t\,e^{-q\tau}.
-  \label{eq:digital-parity}
-\end{equation}
-Moreover, the payoff of a vanilla call decomposes as
-$(S_T-K)^+ = S_T\,\mathbf{1}_{\{S_T \geq K\}} - K\,\mathbf{1}_{\{S_T \geq K\}}$,
-so that, with $Q=1$,
-\begin{equation}
-  C(S_t,K,\tau) = A^{c}(S_t,K,\tau) - K\,D^{c}(S_t,K,\tau)
-               = S_t\,e^{-q\tau}N(d_1) - K\,e^{-r\tau}N(d_2),
-  \label{eq:vanilla-decomposition}
-\end{equation}
-which recovers the Black--Scholes formula. Digital options are therefore the
-elementary building blocks of vanilla options.
-
-\subsubsection{Replication by Call Spreads and the Role of the Smile}
-\label{subsubsec:call-spread}
-
-By~\eqref{eq:call-spread-limit}, a digital call with $Q=1$ is minus the
-derivative of the call price with respect to the strike. With a flat
+With a flat
 volatility, differentiating the Black--Scholes formula gives
 $-\partial C/\partial K = e^{-r\tau}N(d_2)$, consistent
 with~\eqref{eq:cash-call}. When the market quotes a strike-dependent implied
@@ -388,7 +346,8 @@ vega of the vanilla call. Equity indices exhibit a negative skew
 market price of a digital put is correspondingly lower. Pricing a digital with
 a single volatility therefore ignores a first-order effect of the smile.
 
-\subsubsection{Greeks}
+% ---------------------------------------------------------------------
+\subsection{Greeks}
 \label{subsubsec:bs-greeks}
 
 For a cash-or-nothing call with $Q=1$, differentiating~\eqref{eq:cash-call}
@@ -561,10 +520,89 @@ in-the-money one.}
 \end{figure}
 
 % ---------------------------------------------------------------------
-\subsection{American Digital Options}
-\label{subsec:bs-american}
+\subsection{Exercise Styles and Touch Options}
 
-\subsubsection{Optimal Exercise and Equivalence with One-Touch Options}
+Both CON and AON options also exist in American and Bermudan versions, in which
+the trigger is monitored not only at maturity but continuously, or on a
+discrete set of dates, before maturity. Contracts typically specify a
+monitoring of the trigger at each daily close. The coupon may then be paid
+either when the trigger is hit or at maturity. As always for early-exercise
+products, such options are harder to price because the exercise time is
+unknown.
+
+Path-dependent digitals come in several types:
+\begin{enumerate}
+  \item \textbf{One-touch:} pays if and only if the barrier is touched, either
+        immediately or at maturity;
+  \item \textbf{No-touch:} pays if and only if the barrier is never touched;
+  \item \textbf{Double one-touch:} two barriers, pays if and only if either
+        barrier is touched;
+  \item \textbf{Double no-touch:} two barriers, pays if and only if neither
+        barrier is touched.
+\end{enumerate}
+Their prices are derived in Sections~\ref{sec:american} and~\ref{sec:bermudan},
+first under Black--Scholes and then under the Heston model.
+
+% ---------------------------------------------------------------------
+\subsection{Limitations of the Black--Scholes Framework}
+\label{subsec:bs-limits}
+
+The formulas above are exact under the assumptions of the model, but these
+assumptions are particularly restrictive for digital options on an equity
+index.
+
+\begin{enumerate}
+  \item \textbf{No smile.} The model uses a single volatility, whereas the
+        market quotes a skewed implied volatility surface. As shown
+        by~\eqref{eq:smile-correction}, the price of a European digital
+        depends on the slope of the smile at the strike, which no choice of a
+        single $\sigma$ can capture consistently across strikes.
+  \item \textbf{No volatility dynamics.} American and Bermudan digitals depend
+        on the whole path of the underlying. Their prices are determined not
+        only by today's surface but by its future evolution (forward skew,
+        volatility of volatility, spot--volatility correlation), which the
+        Black--Scholes model fixes by assumption.
+  \item \textbf{Hedging instability.} The unbounded delta and gamma near the
+        strike at maturity make the theoretical delta hedge impossible to
+        implement. In practice, digitals are hedged and priced conservatively
+        with call spreads, as in~\eqref{eq:call-spread-limit}, at a cost that
+        depends on the smile.
+\end{enumerate}
+
+These limitations motivate the stochastic volatility model presented in
+Section~\ref{sec:data}, in which the spot--volatility correlation generates
+a skew and the volatility of volatility governs the path-dependent effects.
+
+\clearpage
+
+% ==================================================================
+\section{Market Data and Model}
+\label{sec:data}
+% ==================================================================
+
+\subsection{Data}
+
+As usual, the data used in this paper are available on my
+website\footnote{\url{https://portfolio-eliasbenguedda.fr}}. We use CAC~40
+option quotes of 12 February 2025 to build an implied volatility surface.
+
+\subsection{Model}
+
+We use the Heston model, previously calibrated to this
+surface\footnote{\url{https://portfolio-eliasbenguedda.fr/projects/Heston.html}}.
+
+% ==================================================================
+\section{Pricing of American Digital Options}
+\label{sec:american}
+% ==================================================================
+
+This section prices digital options that can be exercised at any time before
+maturity. We first derive closed-form prices under the Black--Scholes model of
+Section~\ref{subsec:bs-model}, which serve as benchmarks, and then price the
+options under the Heston model calibrated in Section~\ref{sec:data}.
+
+% ---------------------------------------------------------------------
+\subsection{Optimal Exercise and Equivalence with One-Touch Options}
 
 An American cash-or-nothing call allows its holder to exercise at any stopping
 time $\theta \in [t,T]$ and to receive $Q$ provided $S_\theta \geq K$. Let
@@ -598,7 +636,7 @@ where $\mathrm{OT}^{\mathrm{hit}}$ and $\mathrm{OT}^{\mathrm{exp}}$ are the
 one-touch options paying at the hitting time and at maturity respectively.
 \end{remark}
 
-\subsubsection{One-Touch Paying at Hit}
+\subsection{One-Touch Paying at Hit}
 
 Let $\eta = -1$ for an upper barrier ($S_t < B$) and $\eta = +1$ for a lower
 barrier ($S_t > B$), and define
@@ -621,7 +659,7 @@ By Proposition~\ref{prop:american-one-touch}, this is also the price of the
 American digital call ($\eta=-1$, $B=K$) and, symmetrically, of the American
 digital put ($\eta=+1$, $B=K$).
 
-\subsubsection{One-Touch Paying at Maturity and No-Touch Options}
+\subsection{One-Touch Paying at Maturity and No-Touch Options}
 
 When the rebate is paid at maturity, the price is
 $\mathrm{OT}^{\mathrm{exp}} = Q\,e^{-r\tau}\,\mathbb{Q}(\tau_B \leq T \mid \mathcal{F}_t)$.
@@ -636,7 +674,7 @@ drift~\cite{Shreve2004} gives
 A no-touch option, which pays $Q$ at maturity if the barrier is never reached,
 follows by parity: $\mathrm{NT} = Q\,e^{-r\tau} - \mathrm{OT}^{\mathrm{exp}}$.
 
-\subsubsection{Comparison with the European Digital}
+\subsection{Comparison with the European Digital}
 
 When $\nu = 0$, \eqref{eq:touch-probability} reduces to
 $\mathbb{Q}(\tau_B \leq T) = 2\,\mathbb{Q}(S_T \geq B)$ for an upper barrier:
@@ -687,8 +725,26 @@ $\sigma=20\%$).}
 \end{figure}
 
 % ---------------------------------------------------------------------
-\subsection{Bermudan Digital Options}
-\label{subsec:bs-bermudan}
+\subsection{Pricing under the Heston Model}
+\label{subsec:heston-american}
+
+As seen in Section~\ref{subsec:bs-limits}, the Black--Scholes model is not sufficient for other than European options. This is the reason why we are now interested in using another model.
+
+With continuous exercise, the cash digital is exercised as soon as the spot reaches the strike
+
+
+% ==================================================================
+\section{Pricing of Bermudan Digital Options}
+\label{sec:bermudan}
+% ==================================================================
+
+This section prices digital options that can only be exercised on a finite set
+of dates. As for American digitals, we first derive semi-closed-form prices
+under the Black--Scholes model, and then price the options under the Heston
+model calibrated in Section~\ref{sec:data}.
+
+% ---------------------------------------------------------------------
+\subsection{Black--Scholes Pricing}
 
 A Bermudan cash-or-nothing call can only be exercised on a finite set of
 observation dates $t < t_1 < \dots < t_m = T$. By the argument of
@@ -740,65 +796,13 @@ The observation frequency therefore interpolates continuously between the
 European and the American digital.
 
 % ---------------------------------------------------------------------
-\subsection{Limitations of the Black--Scholes Framework}
-\label{subsec:bs-limits}
+\subsection{Pricing under the Heston Model}
+\label{subsec:heston-bermudan}
 
-The formulas above are exact under the assumptions of the model, but these
-assumptions are particularly restrictive for digital options on an equity
-index.
+We now consider a digital with a bermudan style of exercise, the holder can exercise on a set of dates $t_1 < \dots < t_n = T$ and receive the payoff at the exercise date. 
 
-\begin{enumerate}
-  \item \textbf{No smile.} The model uses a single volatility, whereas the
-        market quotes a skewed implied volatility surface. As shown
-        by~\eqref{eq:smile-correction}, the price of a European digital
-        depends on the slope of the smile at the strike, which no choice of a
-        single $\sigma$ can capture consistently across strikes.
-  \item \textbf{No volatility dynamics.} American and Bermudan digitals depend
-        on the whole path of the underlying. Their prices are determined not
-        only by today's surface but by its future evolution (forward skew,
-        volatility of volatility, spot--volatility correlation), which the
-        Black--Scholes model fixes by assumption.
-  \item \textbf{Hedging instability.} The unbounded delta and gamma near the
-        strike at maturity make the theoretical delta hedge impossible to
-        implement. In practice, digitals are hedged and priced conservatively
-        with call spreads, as in~\eqref{eq:call-spread-limit}, at a cost that
-        depends on the smile.
-\end{enumerate}
 
-These limitations motivate the stochastic volatility model presented in
-Section~\ref{sec:heston}, in which the spot--volatility correlation generates
-a skew and the volatility of volatility governs the path-dependent effects.
 
-% ==================================================================
-\section{Market Data and Model}
-\label{sec:data}
-% ==================================================================
-
-\subsection{Data}
-
-As usual, the data used in this paper are available on my
-website\footnote{\url{https://portfolio-eliasbenguedda.fr}}. We use CAC~40
-option quotes of 12 February 2025 to build an implied volatility surface.
-
-\subsection{Model}
-
-We use the Heston model, previously calibrated to this
-surface\footnote{\url{https://portfolio-eliasbenguedda.fr/projects/Heston.html}}.
-
-% ==================================================================
-\section{Pricing under the Heston Model}
-\label{sec:heston}
-% ==================================================================
-
-As seen in the previous section, the Black--Scholes model is
-
-\subsection{Cash-or-Nothing Options}
-
-\subsubsection{European Style}
-
-\subsubsection{American Style}
-
-\subsubsection{Bermudan Style}
 
 % ==================================================================
 \section{Greeks}

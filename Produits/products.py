@@ -219,11 +219,12 @@ class BarrierOption(VanillaOption):
 
 class DigitalOption(VanillaOption):
     """
-    European digital (binary) Call / Put :
-    - cash-or-nothing  : pays `cash` if S_T > K (call) or S_T < K (put) ;
-    - asset-or-nothing : pays S_T under the same condition (asset=True).
-    Early exercise is not supported : an "American" cash digital is a one-touch option (exercised as soon as the
-    strike is reached), which is a barrier product, not a Longstaff-Schwartz problem.
+    Digital (binary) Call / Put with European, Bermudan or American exercise :
+    - cash-or-nothing  : pays `cash` if S > K (call) or S < K (put) at exercise ;
+    - asset-or-nothing : pays S under the same condition (asset=True).
+    Early exercise is priced by Longstaff-Schwartz. With non-negative rates, a cash digital is exercised as soon as
+    it is in the money : the American cash digital is a one-touch paid at hit, the Bermudan one is paid on the
+    first exercise date in the money.
     """
 
     def __init__(self, strike, maturity, isCall=True, cash=1.0, asset=False, exercise=None):
@@ -235,15 +236,13 @@ class DigitalOption(VanillaOption):
         super().__init__(strike, maturity, isCall, exercise)
         # Sanity checks
         if cash <= 0: raise ValueError("cash must be positive.")
-        if self.exercise.style != 'european':
-            raise ValueError("Digital options are European only (an American cash digital is a one-touch).")
         # Attributes
         self.cash = float(cash)
         self.asset = bool(asset)
 
     def payoff(self, S):
         """
-        Payoff at maturity (vectorised).
+        Exercise value at spot S (vectorised).
         """
         in_the_money = S > self.strike if self.isCall else S < self.strike
         return np.where(in_the_money, S if self.asset else self.cash, 0.0)
@@ -266,7 +265,7 @@ class DigitalOption(VanillaOption):
     def control_variate(self, model):
         """
         The European digital itself (same strike, type and payment) : much more correlated with a digital barrier
-        than the vanilla. None if the model has no semi-analytical vanilla price.
+        or an early exercise digital than the vanilla. None if the model has no semi-analytical vanilla price.
         """
         exact = self.exact_european_price(model)
         if exact is None:
@@ -280,7 +279,7 @@ class DigitalOption(VanillaOption):
 
     def __repr__(self):
         paid = "S_T" if self.asset else f"{self.cash:g}"
-        return f"{self.code}(K={self.strike:g}, T={self.maturity:.4f}, pays {paid})"
+        return f"{self.code}(K={self.strike:g}, T={self.maturity:.4f}, pays {paid}, {self.exercise})"
 
 
 class DigitalBarrierOption(DigitalOption, BarrierOption):
