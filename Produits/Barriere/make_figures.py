@@ -1,6 +1,6 @@
-# This script builds the figures of the report barrier_pricing.tex into the figures/ folder :
+# This script builds the figures of the barrier options report into the figures/ folder :
 # - paths.png        : illustrative paths, knocked or not, for a down and an up barrier ;
-# - the price / Greeks figures, extracted from the outputs of the executed notebook pricer.ipynb.
+# - the price / Greeks figures, extracted from the outputs of the executed notebook barrier_pricer.ipynb.
 import os
 import json
 import base64
@@ -46,7 +46,7 @@ def plot_paths(n_paths=12, n_steps=252, sigma=0.18, seed=3):
     plt.close(fig)
 
 
-def extract_notebook_figures(notebook=os.path.join(HERE, "pricer.ipynb")):
+def extract_notebook_figures(notebook=os.path.join(HERE, "barrier_pricer.ipynb")):
     """
     Saves the PNG outputs of the executed notebook, identified by a fragment of their cell source.
     """

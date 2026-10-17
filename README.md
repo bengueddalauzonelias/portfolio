@@ -22,12 +22,13 @@ results. Papers and project pages: **[portfolio-eliasbenguedda.fr](https://portf
 
 ```
 Model/                  Equity models
-  Black_Scholes.py        Black–Scholes pricing and implied volatility
-  Heston.py               Heston pricing (Fourier) and calibration
+  Black_Scholes.py        Black–Scholes pricing and vega
+  Heston.py               Heston characteristic function and Fourier pricing
+  optimizer.py            Calibration routines
   local_vol.py            Dupire local volatility and LSV model (particle method)
   ImpliedVolatilitySurface.py, forward_curve.py
   monte_carlo.py          Model-agnostic Monte Carlo pricer
-  greeks.py, optimizer.py, error.py, calibration_validation.py
+  greeks.py, error.py, calibration_validation.py
   heston_test.ipynb, lsv_test.ipynb
 
 Fixed_Income_Models/    Rates models (importable package)
@@ -35,7 +36,7 @@ Fixed_Income_Models/    Rates models (importable package)
   interpolation.py        Linear, cubic, PCHIP, monotone convex, Nelson–Siegel, Svensson
   yield_curve.py, bootstrap.py
   hull_white_1F.py        Hull–White one-factor model
-  rate_pricing.py         Bachelier and Black formulas
+  rate_pricing.py         Bachelier, Black and shifted Black formulas
   yield_curve.ipynb, estr_curve.ipynb, euribor_curve.ipynb, hull_white_test.ipynb
 
 Produits/               Product pricers, one notebook per product
@@ -50,6 +51,7 @@ Produits/               Product pricers, one notebook per product
 
 Data/                   Market data
   CAC40_MarketOptions_12022025.csv, EURIBOR6M_ZCRates_12022025.csv
+  UST_DailyParYields.csv   Daily US Treasury par yields (PCA of the yield curve paper)
   EUR/   €STR, ECB key rates and meetings, AAA curve, EURIBOR (see Data/EUR/README.md)
   USD/   SOFR, Fed funds, Treasury par yields, FOMC meetings (see Data/USD/README.md)
 

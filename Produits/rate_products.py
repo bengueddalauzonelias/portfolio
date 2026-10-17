@@ -4,7 +4,7 @@ import numpy as np
 
 # This script defines the interest rate products : Swap, CapFloor and Swaption.
 # A product only describes its contract : schedules, accruals, notionals, strike and exercise rights.
-# It knows nothing about the curve or the model ; the pricers of Fixed_Income_Models (rate_pricing.py, hull_white.py)
+# It knows nothing about the curve or the model ; the pricers of Fixed_Income_Models (rate_pricing.py, hull_white_1F.py)
 # read these schedules. Times are year fractions (no day-count convention, calendar or settlement lag).
 # Single-curve framework : the floating leg pays the forward of the curve used for discounting (EURIBOR 6M).
 

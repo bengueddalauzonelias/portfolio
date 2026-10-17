@@ -1,5 +1,5 @@
 # This script builds the figures of the section "No-arbitrage conditions" of the Heston report
-# (no_arbitrage_section.tex) and prints the numbers of its table. It reproduces section 8 of Model/heston_test.ipynb :
+# (heston_rapport.tex, section 8.3) and prints the numbers of its table. It reproduces section 8 of Model/heston_test.ipynb :
 # three static no-arbitrage conditions checked on six surfaces, on a grid of 71 log-moneynesses x 61 maturities.
 #   figures/no_arbitrage_map.png          : where each condition is violated, for each surface
 #   figures/monotonicity_quadrature.png   : Heston prices near zero, default vs fine Lewis quadrature
