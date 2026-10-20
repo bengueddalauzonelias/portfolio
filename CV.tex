@@ -7,9 +7,9 @@
 \usepackage{titlesec}
 \usepackage[hidelinks]{hyperref}
 \usepackage{xcolor}
-\usepackage{array}
 \input{glyphtounicode}
 \pdfgentounicode=1 % ATS: makes the PDF text extractable and searchable
+\pdfinterwordspaceon % ATS: real space characters between words (no "underHull--White" after a font change)
 \hypersetup{pdftitle={Elias Benguedda Lauzon - CV - Quantitative Research / Trading Intern},
   pdfauthor={Elias Benguedda Lauzon},
   pdfsubject={Quantitative Research / Trading Internship - January 2027},
@@ -26,22 +26,19 @@
 \titlespacing*{\section}{0pt}{13pt}{5pt}
 \setlist[itemize]{leftmargin=12pt,itemsep=2pt,topsep=2pt,parsep=0pt,partopsep=0pt,label=\textbullet,after=\vspace{6pt}}
 
-% Date column of fixed width: descriptions never run under the dates
-\newlength{\datew}\setlength{\datew}{3.6cm}
-\newlength{\descw}\setlength{\descw}{\dimexpr\textwidth-\datew\relax}
 % \entry{Company, City}{Dates}{Title}
 \newcommand{\entry}[3]{%
-  \begin{tabular}{@{}p{\descw}@{}>{\raggedleft\arraybackslash}p{\datew}@{}}
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}l r}
     \textbf{#1} & \textbf{#2} \\
     \textit{#3} & \\
-  \end{tabular}\par\vspace{-2pt}}
-% \edu[Note under dates]{School}{Dates}{Degree}{Coursework}
-\newcommand{\edu}[5][]{%
-  \begin{tabular}{@{}p{\descw}@{}>{\raggedleft\arraybackslash}p{\datew}@{}}
-    \textbf{#2} & \textbf{#3} \\
-    \textit{#4} & \small #1 \\
-  \end{tabular}\par
-  \parbox{\descw}{\small\hspace{12pt}#5}\par\vspace{5pt}}
+  \end{tabular*}\vspace{-2pt}}
+% \edu{School}{Dates}{Degree}{Coursework}
+\newcommand{\edu}[4]{%
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}l r}
+    \textbf{#1} & \textbf{#2} \\
+  \end{tabular*}\par
+  \textit{#3}\par % outside the tabular: a long degree line cannot push the dates into the margin
+  {\small\hspace{12pt}#4}\par\vspace{5pt}}
 % \project{Title}{Keywords}
 \definecolor{linkblue}{RGB}{0,70,160}
 \newcommand{\portfolio}[1]{\href{https://portfolio-eliasbenguedda.fr}{\textcolor{linkblue}{#1}}}
@@ -65,47 +62,53 @@
 
 \entry{Société Générale \textendash{} Pricing Team, Paris}{Jun 2026 \textendash{} Dec 2026}{Quantitative Research Intern \textendash{} Derivatives Pricing}
 \begin{itemize}
-  \item Implemented a \textbf{callable bond} pricer under \textbf{Hull--White 1F}: Jamshidian decomposition for European calls, \textbf{Monte Carlo + Longstaff--Schwartz} for Bermudan and American calls
-  \item Built and backtested correlation models (\textbf{EWMA, DCC-GARCH, Ornstein--Uhlenbeck}) for pricing \textbf{Worst-of / Best-of} basket options; \textbf{EWMA model adopted by the desk}
+  \item Implemented a callable bond pricer under Hull--White 1F: Jamshidian decomposition for European calls, Monte Carlo + Longstaff--Schwartz for Bermudan and American calls
+  \item Built and backtested correlation models (EWMA, DCC-GARCH, Ornstein--Uhlenbeck) for pricing Worst-of / Best-of basket options
 \end{itemize}
 
 \entry{Natixis \textendash{} Trading Solutions, Paris}{Summer 2025}{Quantitative Analyst Intern \textendash{} Equity \& FICC}
 \begin{itemize}
-  \item Automated \textbf{P\&L} monitoring with Python data pipelines, moving the follow-up from \textbf{quarterly to daily}
-  \item Built position tracking and performance analysis tools on \textbf{equity derivatives} for front-office traders
+  \item Automated P\&L monitoring with Python data pipelines, moving the follow-up from quarterly to daily
+  \item Built position tracking and performance analysis tools on equity derivatives for front-office traders
 \end{itemize}
 
 % ============================================================
 \section{Quantitative Projects\hfill\normalfont\normalsize Research papers \& code: \portfolio{\textbf{portfolio-eliasbenguedda.fr}}}
 
-\project{Heston \& Local Stochastic Volatility Calibration}{CAC40 options, Python}
+\project{Stochastic Volatility Calibration: Heston \& LSV}{CAC40 equity options, Python}
 \begin{itemize}
-  \item Calibrated \textbf{Heston} to 142 CAC40 options via Fourier pricing: implied vol RMSE 0.42, down to 0.12 with time-dependent parameters
-  \item Calibrated an \textbf{LSV} model (Dupire local vol, particle method) and quantified \textbf{model risk} on barriers and autocalls at identical vanilla prices
+  \item Calibrated Heston to 142 CAC40 options (Fourier pricing, global optimization): implied vol RMSE 0.42 vol pt
+  \item Cut the error to 0.12 vol pt with time-dependent Heston; tested overfitting out-of-sample and under quote noise
+  \item Calibrated LSV (SSVI, Dupire local vol, particle method); model risk: exotics up to 2x apart for the same vanillas
+\end{itemize}
+
+\project{Barrier Options Pricer}{CAC40, Heston, Monte Carlo, Longstaff--Schwartz}
+\begin{itemize}
+  \item Priced the 8 single barrier options under calibrated Heston (Brownian bridge): within 2 std errors of closed forms
+  \item Added Bermudan/American exercise (Longstaff--Schwartz) and Greeks up to vanna and volga
 \end{itemize}
 
 \project{Autocallable Notes Pricer}{Athena, Phoenix, Monte Carlo}
 \begin{itemize}
-  \item Built a \textbf{Monte Carlo} pricer under calibrated Heston with variance reduction, validated on 5 closed-form limits
+  \item Built a Monte Carlo pricer under calibrated Heston with variance reduction, validated on 5 closed-form limits
   \item Computed fair coupons, call/loss probabilities and \textbf{Greeks} (vega, dividends) for 35 product variants
 \end{itemize}
 
-\project{Interest Rate Curves \& Derivatives}{\texteuro STR, EURIBOR, SOFR, Hull--White}
+\project{Interest Rate Curves \& Derivatives}{ESTR, EURIBOR, SOFR, Hull--White}
 \begin{itemize}
-  \item Bootstrapped \texteuro STR OIS and dual-curve EURIBOR \textbf{yield curves} (QuantLib-matched); PCA on 181 Treasury curves
-  \item Priced a \textbf{callable SOFR range accrual} under Hull--White (static replication, Monte Carlo + \textbf{Longstaff--Schwartz})
+  \item Bootstrapped ESTR OIS and dual-curve EURIBOR 3M/6M yield curves, matching QuantLib within $10^{-7}$ bp
+  \item Computed par-point risk on both curves and the implied ECB policy path; PCA on 181 Treasury curves
+  \item Priced a callable SOFR range accrual (Hull--White): replication, Monte Carlo, Longstaff--Schwartz within 1 bp
 \end{itemize}
 
 % ============================================================
 \section{Education}
 
-\edu[gap year 2026--27]{Mines Saint-Étienne (Grande École d'ingénieurs), France}{2024 \textendash{} 2028}{MSc in Engineering (Diplôme d'Ingénieur), Applied Mathematics \& Data Science}{Probability, stochastic processes, optimization, machine learning, statistical modelling}
+\edu{Mines Saint-Étienne (Grande École d'ingénieurs), France}{2024 \textendash{} 2028}{MEngSc in Engineering (Diplôme d'Ingénieur), Applied Mathematics \& Data Science \textendash{} gap year 2026--27}{Probability, stochastic processes, optimization, machine learning, statistical modelling}
 
 \edu{École Normale Supérieure de Lyon (ENS de Lyon), France}{2025 \textendash{} 2026}{Advanced courses in Machine Learning \& Stochastic Modelling}{Reinforcement learning, probabilistic modelling, convex optimization, statistical learning theory}
 
-\edu{Aix-Marseille University, France}{2025 \textendash{} 2026}{Master's in Fundamental Mathematics}{Stochastic calculus, PDEs, numerical methods, measure theory}
-
-\edu{Lycée Janson de Sailly, Paris}{2022 \textendash{} 2024}{Classes Préparatoires MPSI/MP \textendash{} intensive Mathematics, Physics \& Computer Science}{\textbf{Ranked 1st in mathematics} (2nd year); admissible to the Centrale and Mines entrance exams}
+\edu{Lycée Janson de Sailly, Paris}{2022 \textendash{} 2024}{Classes Préparatoires MPSI/MP \textendash{} intensive Mathematics, Physics \& Computer Science}{Ranked 1st in mathematics (2nd year); admissible to the Centrale and Mines entrance exams}
 
 % ============================================================
 \section{Skills, Languages \& Interests}
