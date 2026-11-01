@@ -1,0 +1,719 @@
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+% Packages
+% ------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
+
+% ------------------------------------------------------------------
+% Macros
+% ------------------------------------------------------------------
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\code}[1]{\texttt{#1}}
+\DeclareMathOperator{\artanh}{artanh}
+
+% Images extracted from Models/correlation.ipynb by make_figures.py ; a framed placeholder is printed while a file is missing.
+\newcommand{\figfile}[2]{%
+  \IfFileExists{figures/#1}{\includegraphics[width=#2]{figures/#1}}%
+  {\fbox{\parbox[c][4cm][c]{#2}{\centering\small missing figure:\\ \texttt{figures/#1}}}}}
+
+\lstset{basicstyle=\ttfamily\footnotesize, keywordstyle=\color{blue!70!black}, commentstyle=\color{gray},
+        stringstyle=\color{teal}, frame=single, breaklines=true, language=Python, showstringspaces=false}
+
+% ------------------------------------------------------------------
+\title{Correlation Modelling for Worst-of and Best-of Options:\\
+Statistical Tests on the LVMH--Hermès Dependence}
+\author{Elias Benguedda}
+\date{November 2026}
+
+\begin{document}
+\emergencystretch=3em
+\maketitle
+
+\begin{abstract}
+Worst-of and best-of options pay on the minimum or the maximum of the performances of a basket, and their price
+depends on the dependence between the underlyings as much as on their volatilities. This report prepares a
+\emph{non-stochastic} correlation model for a basket of two French stocks, LVMH and Hermès: the pricing correlation
+is a deterministic function of the history known at the pricing date, so that the same inputs always give the same
+price. Before choosing that function, 21 years of daily data (5{,}588 returns, January 2005 to October 2026) are put
+through a battery of tests. The correlation does not depend on the return horizon (0.60 from 1 to 60 days), so daily
+returns can be used. It is not constant: equality across years is rejected ($p \approx 10^{-90}$), the yearly value
+ranges from 0.10 to 0.85 with a level shift around 2015 (0.47 before, 0.74 after), and the Engle--Sheppard test
+rejects a constant conditional correlation ($p \approx 10^{-5}$). On GARCH-standardised residuals, a mean-reverting
+DCC model beats both the constant (likelihood ratio 443) and the integrated EWMA specification (likelihood ratio 60,
+$p \approx 10^{-14}$); its persistence $a + b = 0.9915$ gives a half-life of 82 trading days, so that over a one-year
+product only 41\% of today's deviation from the long-run correlation survives on average. The joint tails are fatter
+than under a Gaussian dependence, mostly on the upside, and the correlation is higher in high-volatility regimes.
+These results set the list of candidate models for the next sections. This paper is linked to my GitHub, which can be
+found on my portfolio\footnote{\url{https://portfolio-eliasbenguedda.fr}}, and all scripts are available in the same
+repository.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ==================================================================
+\section{Introduction}\label{sec:intro}
+% ==================================================================
+
+\subsection{Motivation}
+A worst-of (best-of) option on a basket of $n$ stocks pays on the worst (best) of the performances
+$S^i_T / S^i_0$. These payoffs are the building blocks of most multi-asset structured products: worst-of
+autocallables, worst-of reverse convertibles and best-of calls. Each vanilla option on a single underlying
+identifies the volatility of that underlying, but no listed instrument identifies the correlation between two single
+stocks with any liquidity. The pricing correlation therefore has to be estimated from history, and the estimator is
+a modelling choice with a direct price impact.
+
+A pricing desk also needs \emph{reproducibility}: a structured product priced twice with the same inputs must have
+the same price, for instance when a data error forces a recalculation. This rules out correlation models whose
+pricing correlation is itself random, such as a correlation following its own diffusion, and motivates a
+\emph{non-stochastic} model:
+\begin{equation}\label{eq:non-stochastic}
+\rho_{\mathrm{pricing}}(t_0, T) = f\bigl((r_s)_{s \le t_0},\, T\bigr),
+\end{equation}
+a deterministic function of the returns observed up to the pricing date $t_0$, possibly depending on the maturity
+$T$ of the product. The historical correlation over a window, its exponentially weighted version (EWMA) and the
+forecast of a GARCH-type conditional correlation model are all of this form.
+
+\subsection{Scope of this report}
+Choosing $f$ in \eqref{eq:non-stochastic} requires knowing how the dependence between the underlyings actually
+behaves. This first part of the study is purely statistical: on LVMH and Hermès, two luxury stocks listed in Paris,
+it tests whether the correlation depends on the return horizon, whether it is constant, whether it mean-reverts and
+at which speed, and whether a Gaussian dependence describes the joint extremes. Each test is chosen for its
+consequence on the model; the models themselves and the pricing of worst-of and best-of options will be the subject of
+the following sections.
+
+\subsection{Organisation of the paper}
+Section~\ref{sec:wobo} recalls the payoffs and how the correlation enters their price. Section~\ref{sec:data}
+describes the data. Section~\ref{sec:marginals} tests the marginals, Section~\ref{sec:horizon} the dependence of the
+correlation on the return horizon, Section~\ref{sec:constancy} its constancy, Section~\ref{sec:conditional} compares
+constant, integrated and mean-reverting conditional correlation models, Section~\ref{sec:reversion} measures the mean
+reversion without a model and Section~\ref{sec:tails} studies asymmetry and tails. Section~\ref{sec:synthesis}
+draws the consequences for the model, Sections~\ref{sec:implementation} and~\ref{sec:limitations} describe the
+implementation and the limitations, and Section~\ref{sec:conclusion} concludes.
+
+% ==================================================================
+\section{Worst-of and Best-of Options}\label{sec:wobo}
+% ==================================================================
+
+\subsection{Payoffs}
+Let $X^i_T = S^i_T / S^i_0$ be the performance of stock $i$ and $m_T = \min_i X^i_T$, $M_T = \max_i X^i_T$. The
+worst-of and best-of calls and puts of strike $K$ pay
+\begin{equation}
+(m_T - K)^+,\qquad (K - m_T)^+,\qquad (M_T - K)^+,\qquad (K - M_T)^+.
+\end{equation}
+For two assets, $m_T + M_T = X^1_T + X^2_T$ and the identity
+$(m_T - K)^+ + (M_T - K)^+ = (X^1_T - K)^+ + (X^2_T - K)^+$ (and the same for puts) shows that the worst-of and the
+best-of option of the same type add up to the two vanilla options, which do not depend on the correlation: whatever
+the correlation adds to one, it takes from the other.
+
+\subsection{Role of the correlation}
+In a multi-asset Black--Scholes model, $\dd S^i_t / S^i_t = (r - q_i)\,\dd t + \sigma_i\,\dd W^i_t$ with
+$\dd\langle W^i, W^j\rangle_t = \rho_{ij}\,\dd t$, the dependence between the terminal values is a Gaussian copula
+with correlation matrix $(\rho_{ij})$. The spread between the two performances shrinks as the correlation rises:
+$\E\,|X^1_T - X^2_T|$ decreases with $\rho$, so the worst performance rises and the best one falls. Worst-of calls are
+therefore worth more, and worst-of puts less, when the correlation is high; best-of options move the other way. For
+two assets, the call on the minimum and on the maximum have a closed form \cite{stulz1982}, which will serve to
+validate the Monte Carlo pricer in the next part. A worst-of put, the option sold by the investor in a worst-of
+autocallable, is \emph{short correlation} for the buyer of the note: a correlation estimate that is too high
+underprices the risk.
+
+The Gaussian copula has two consequences that the tests of this report check: the dependence is summarised by a
+single number per pair, and the joint extremes are as rare as in a bivariate normal distribution (no tail dependence).
+
+% ==================================================================
+\section{Data}\label{sec:data}
+% ==================================================================
+
+\subsection{Source and adjustments}
+Daily closes of LVMH (\code{MC.PA}) and Hermès (\code{RMS.PA}) on Euronext Paris are downloaded from Yahoo Finance
+with the \code{yfinance} library \cite{yfinance} by the script \code{Data/Equity/download\_data.py}, from 3 January
+2005 to 30 October 2026 (5{,}589 trading days, no missing value). Yahoo data is free but unofficial and its history
+can be revised, so the files are frozen in the repository and every number of this report is reproducible.
+
+Two series are stored per stock. The \emph{adjusted close}, corrected for dividends and splits, is used for every
+statistic on returns, so that an ex-dividend date is not read as a price drop. The \emph{raw close} is the underlying
+of the payoffs (price return); dividends will enter the pricing through the forwards. The log return is
+$r^i_t = \ln(S^i_t / S^i_{t-1})$ on the adjusted close.
+
+\subsection{Synchronicity}
+Both stocks close at the same time on the same exchange, so their daily returns are synchronous. For pairs listed on
+different time zones, a European close and an American close are separated by several hours of news, and the
+correlation of daily returns is biased downwards; multi-day returns are then used. Section~\ref{sec:horizon} checks
+that this is not needed here.
+
+\begin{figure}[h]
+\centering
+\figfile{prices_returns.png}{\textwidth}
+\caption{Total return of LVMH and Hermès since January 2005 (log scale) and daily log returns.}
+\label{fig:prices}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+ & Vol (ann.) & Skew. & Exc. kurt. & JB $p$ & LB $r$ $p$ & LB $r^2$ $p$ & ARCH-LM $p$ \\
+\midrule
+LVMH   & 28.3\% & 0.15 & 4.9 & $<10^{-300}$ & 0.018 & $10^{-154}$ & $6\times10^{-63}$ \\
+Hermès & 27.3\% & 0.15 & 6.3 & $<10^{-300}$ & 0.23  & $4\times10^{-171}$ & $7\times10^{-89}$ \\
+\bottomrule
+\end{tabular}
+\caption{Marginal statistics of the daily log returns, 2005--2026. JB: Jarque--Bera normality test; LB: Ljung--Box
+test with 10 lags on returns and squared returns; ARCH-LM: Engle's test with 5 lags.}
+\label{tab:marginals}
+\end{table}
+
+% ==================================================================
+\section{Marginals}\label{sec:marginals}
+% ==================================================================
+
+\subsection{Tests}
+Three properties of each return series are tested (Table~\ref{tab:marginals}): normality with the Jarque--Bera test
+\cite{jarquebera1980}, absence of autocorrelation of the returns and of the squared returns with the Ljung--Box test
+\cite{ljungbox1978}, and absence of conditional heteroskedasticity with Engle's ARCH-LM test \cite{engle1982}.
+
+\subsection{Results}
+Both stocks have an annualised volatility of about 28\%, a small positive skewness and an excess kurtosis of 5 to 6:
+normality is rejected without ambiguity. The returns themselves are nearly unpredictable (Ljung--Box $p = 0.018$ for
+LVMH, $0.23$ for Hermès), while the squared returns are strongly autocorrelated: volatility comes in clusters.
+
+A GARCH(1,1) with Student-$t$ innovations \cite{bollerslev1986,bollerslev1987} is fitted to each stock
+(Table~\ref{tab:garch}). The persistence $\alpha + \beta$ is 0.990 for LVMH and 0.996 for Hermès, and the degrees of
+freedom of about 5 confirm fat-tailed innovations. The standardised residuals
+$\varepsilon^i_t = (r^i_t - \mu_i) / \sigma_{i,t}$ remove the volatility clusters.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+ & $\omega$ & $\alpha$ & $\beta$ & $\alpha + \beta$ & $\nu$ \\
+\midrule
+LVMH   & 0.037 & 0.050 & 0.939 & 0.990 & 5.1 \\
+Hermès & 0.019 & 0.053 & 0.943 & 0.996 & 5.1 \\
+\bottomrule
+\end{tabular}
+\caption{GARCH(1,1) with Student-$t$ innovations, returns in percent:
+$\sigma^2_{t} = \omega + \alpha\,(r_{t-1} - \mu)^2 + \beta\,\sigma^2_{t-1}$.}
+\label{tab:garch}
+\end{table}
+
+\subsection{Consequence for the dependence tests}
+Volatility clustering matters for the correlation. When volatilities move through time, tests of the constancy of the
+correlation applied to raw returns over-reject, and the sample correlation mechanically rises in volatile periods
+\cite{forbesrigobon2002}. Every dependence test below is therefore run on the raw returns and, where it matters, on
+the GARCH residuals $\varepsilon_t$. On the full sample the two correlations are close: 0.605 on raw returns and
+0.609 on residuals.
+
+% ==================================================================
+\section{Correlation and Return Horizon}\label{sec:horizon}
+% ==================================================================
+The correlation of non-overlapping $h$-day log returns is computed for $h$ from 1 to 60 days, with the 95\% interval
+given by the Fisher transform: $\artanh\hat\rho$ is approximately normal with variance $1/(n-3)$ \cite{fisher1921}.
+A correlation that increases with the horizon would signal non-synchronous trading or a lead--lag effect (the Epps
+effect, \cite{epps1979}).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}rrccc@{}}
+\toprule
+Horizon (days) & $n$ & $\hat\rho$ & 95\% low & 95\% high \\
+\midrule
+1  & 5{,}588 & 0.605 & 0.588 & 0.621 \\
+2  & 2{,}794 & 0.619 & 0.595 & 0.641 \\
+5  & 1{,}117 & 0.599 & 0.560 & 0.636 \\
+10 & 558     & 0.609 & 0.554 & 0.658 \\
+20 & 279     & 0.556 & 0.470 & 0.632 \\
+60 & 93      & 0.605 & 0.458 & 0.720 \\
+\bottomrule
+\end{tabular}
+\caption{Correlation of non-overlapping $h$-day log returns.}
+\label{tab:horizon}
+\end{table}
+
+The correlation is flat in the horizon, about 0.60 from 1 to 60 days, and every interval contains the daily value
+(Table~\ref{tab:horizon}). There is no synchronicity bias: \emph{daily returns are used}, which gives five times
+more observations than weekly returns and a correspondingly more precise estimator.
+
+% ==================================================================
+\section{Is the Correlation Constant?}\label{sec:constancy}
+% ==================================================================
+
+\subsection{Equality across years}
+Split the sample into $K$ calendar years with $n_k$ observations and sample correlation $\hat\rho_k$. Under
+independent normal observations, $z_k = \artanh\hat\rho_k$ is approximately $\mathcal N(\artanh\rho_k, 1/(n_k - 3))$
+and, under $H_0: \rho_1 = \dots = \rho_K$,
+\begin{equation}
+Q = \sum_{k=1}^K (n_k - 3)(z_k - \bar z)^2 \sim \chi^2_{K-1}, \qquad
+\bar z = \frac{\sum_k (n_k - 3)\, z_k}{\sum_k (n_k - 3)}.
+\end{equation}
+With $K = 22$ years, $Q = 490$ on raw returns ($p = 2\times10^{-90}$) and $Q = 429$ on GARCH residuals
+($p = 10^{-77}$): removing the volatility clusters barely changes the conclusion. The yearly correlations
+(Table~\ref{tab:yearly}) range from 0.10 in 2014 to 0.85 in 2022. The year 2014 is that of the settlement of LVMH's
+stake in Hermès, which may explain an idiosyncratic decoupling; the low 2017 value (0.38) is not explained here.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lccccccccccc@{}}
+\toprule
+Year & 2005 & 2006 & 2007 & 2008 & 2009 & 2010 & 2011 & 2012 & 2013 & 2014 & 2015 \\
+\midrule
+$\hat\rho$ returns   & 0.41 & 0.46 & 0.57 & 0.52 & 0.55 & 0.42 & 0.51 & 0.43 & 0.54 & 0.10 & 0.76 \\
+$\hat\rho$ residuals & 0.41 & 0.39 & 0.55 & 0.57 & 0.53 & 0.49 & 0.50 & 0.44 & 0.52 & 0.23 & 0.74 \\
+\midrule
+Year & 2016 & 2017 & 2018 & 2019 & 2020 & 2021 & 2022 & 2023 & 2024 & 2025 & 2026 \\
+\midrule
+$\hat\rho$ returns   & 0.73 & 0.38 & 0.72 & 0.75 & 0.77 & 0.77 & 0.85 & 0.82 & 0.83 & 0.65 & 0.67 \\
+$\hat\rho$ residuals & 0.70 & 0.39 & 0.69 & 0.73 & 0.78 & 0.77 & 0.85 & 0.81 & 0.84 & 0.67 & 0.68 \\
+\bottomrule
+\end{tabular}
+\caption{Yearly correlations of daily returns and of GARCH residuals (2026: January to October).}
+\label{tab:yearly}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{rolling_correlation.png}{\textwidth}
+\caption{Rolling correlation of daily returns over 63 and 252 days, yearly values and full-sample value.}
+\label{fig:rolling}
+\end{figure}
+
+Figure~\ref{fig:rolling} shows a level shift around 2015: the correlation is 0.47 over 2005--2014 and 0.74 over
+2015--2026, with fluctuations of $\pm 0.2$ around each level at the quarterly scale. The full-sample value of 0.61 is
+representative of neither period. For a pricing correlation, the estimation window or the weighting of the
+observations is therefore a first-order choice: a historical correlation over the whole sample would mix two
+regimes. Over the last year the correlation is 0.67, over the last three years 0.70.
+
+\subsection{Constancy of the conditional correlation}
+The yearly test compares unconditional correlations. The test of Engle and Sheppard \cite{englesheppard2001}
+addresses the conditional correlation directly. The standardised residuals are whitened with the constant
+correlation matrix, $u_t = L^{-1}\varepsilon_t$ with $\bar R = LL^\top$ the Cholesky factorisation of the sample
+correlation of $\varepsilon_t$. Under a constant conditional correlation, $u^1_t$ and $u^2_t$ are uncorrelated at
+every date and the cross product $Y_t = u^1_t u^2_t$ has mean zero and no predictability. The regression
+\begin{equation}
+Y_t = \delta_0 + \delta_1 Y_{t-1} + \dots + \delta_s Y_{t-s} + \eta_t
+\end{equation}
+gives the statistic $\hat\delta^\top X^\top X \hat\delta / \hat\sigma^2_\eta \sim \chi^2_{s+1}$ under the null.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}cccc@{}}
+\toprule
+Lags $s$ & Statistic & df & $p$-value \\
+\midrule
+1  & 23.3 & 2  & $9\times10^{-6}$ \\
+5  & 33.1 & 6  & $1\times10^{-5}$ \\
+10 & 47.1 & 11 & $2\times10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\caption{Engle--Sheppard test of constant conditional correlation on the GARCH residuals.}
+\label{tab:es}
+\end{table}
+
+The constant conditional correlation is rejected at every lag (Table~\ref{tab:es}): past co-movements predict
+future co-movements, which is what a dynamic correlation model exploits.
+
+% ==================================================================
+\section{Constant, Integrated or Mean-Reverting Correlation}\label{sec:conditional}
+% ==================================================================
+
+\subsection{Three specifications}
+Following the two-step approach of Engle \cite{engle2002}, the conditional correlation is modelled on the GARCH
+residuals through a pseudo-correlation matrix $Q_t$, with $\rho_t = Q_{12,t} / \sqrt{Q_{11,t}\,Q_{22,t}}$. Three
+nested specifications are compared:
+\begin{align}
+\text{CCC \cite{bollerslev1990}:} \quad & Q_t = \bar Q, \\
+\text{EWMA \cite{riskmetrics1996}:} \quad & Q_t = (1 - \lambda)\,\varepsilon_{t-1}\varepsilon_{t-1}^\top + \lambda\,Q_{t-1}, \\
+\text{DCC \cite{engle2002}:} \quad & Q_t = (1 - a - b)\,\bar Q + a\,\varepsilon_{t-1}\varepsilon_{t-1}^\top + b\,Q_{t-1},
+\end{align}
+with $\bar Q$ the sample covariance of $\varepsilon_t$. The EWMA is the DCC on the boundary $a + b = 1$, without a
+long-run target, and the CCC is the DCC with $a = 0$. All three are deterministic functions of the past and are
+therefore candidates for \eqref{eq:non-stochastic}. The parameters maximise the correlation part of the Gaussian
+log-likelihood,
+\begin{equation}
+\ell_C = -\frac12 \sum_{t} \left[\ln(1 - \rho_t^2) + \frac{(\varepsilon^1_t)^2 + (\varepsilon^2_t)^2
+- 2\rho_t\,\varepsilon^1_t\varepsilon^2_t}{1 - \rho_t^2} - (\varepsilon^1_t)^2 - (\varepsilon^2_t)^2\right].
+\end{equation}
+
+\subsection{Forecasts over the life of a product}
+The three models differ most in their forecasts. The CCC forecast is constant. The EWMA is integrated: its forecast
+of $Q_{t+h}$ is $Q_{t+1}$ for every $h$, so the correlation of today is used for the whole life of the product. The
+DCC reverts to the long-run correlation $\bar\rho$; with the approximation of Engle and Sheppard
+\cite{englesheppard2001},
+\begin{equation}\label{eq:dcc-forecast}
+\E_t[\rho_{t+h}] \approx \bar\rho + (a + b)^{h-1}(\rho_{t+1} - \bar\rho),
+\end{equation}
+and the average correlation over a product of $H$ days is
+\begin{equation}\label{eq:dcc-average}
+\frac1H \sum_{h=1}^H \E_t[\rho_{t+h}] \approx \bar\rho + w(H)\,(\rho_{t+1} - \bar\rho), \qquad
+w(H) = \frac{1 - (a+b)^H}{H\,(1 - a - b)}.
+\end{equation}
+
+\subsection{Results}
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccccl@{}}
+\toprule
+Model & $\ell_C$ & Parameters & AIC & BIC & Estimates \\
+\midrule
+CCC  & 1293.2 & 1 & $-2584$ & $-2578$ & $\bar\rho = 0.609$ \\
+EWMA & 1484.8 & 1 & $-2968$ & $-2961$ & $\lambda = 0.977$ \\
+DCC  & 1514.7 & 3 & $-3023$ & $-3004$ & $a = 0.031$, $b = 0.961$, $a + b = 0.9915$ \\
+\bottomrule
+\end{tabular}
+\caption{Conditional correlation models fitted on the GARCH residuals (5{,}588 days). The DCC count includes the
+targeted $\bar\rho$.}
+\label{tab:dcc}
+\end{table}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llccc@{}}
+\toprule
+$H_0$ & $H_1$ & LR & df & $p$-value \\
+\midrule
+CCC (constant)             & EWMA & 383.3 & 1 & $2\times10^{-85}$ \\
+CCC (constant)             & DCC  & 443.1 & 2 & $6\times10^{-97}$ \\
+EWMA (integrated, $a+b=1$) & DCC  & 59.8  & 1 & $1\times10^{-14}$ \\
+\bottomrule
+\end{tabular}
+\caption{Likelihood ratio tests between the conditional correlation models.}
+\label{tab:lr}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{conditional_correlation.png}{\textwidth}
+\caption{Conditional correlation of the GARCH residuals under the CCC, EWMA ($\lambda = 0.977$) and DCC models.}
+\label{fig:conditional}
+\end{figure}
+
+Both dynamic models beat the constant correlation by a wide margin, and the DCC beats the EWMA
+(Tables~\ref{tab:dcc} and~\ref{tab:lr}). The paths are close (Figure~\ref{fig:conditional}): the two models differ
+less in their filtered correlation than in their forecast. The conditional correlation is \emph{persistent but
+mean-reverting}: $a + b = 0.9915$ gives a half-life of $\ln 2 / |\ln(a+b)| = 82$ trading days, about four months.
+
+Formula~\eqref{eq:dcc-average} turns this into weights on today's deviation from the long-run level:
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Product maturity & 3 months & 1 year & 3 years \\
+\midrule
+Weight $w(H)$ of the current deviation & 0.78 & 0.41 & 0.16 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Over a one-year product, only 41\% of the current deviation survives on average; over three years, 16\%. An EWMA,
+whose forecast is flat, keeps 100\% at every maturity. The fitted EWMA parameter $\lambda = 0.977$ (an observation
+half-life of 30 days) is also well above the 0.94 of RiskMetrics \cite{riskmetrics1996}, which was calibrated for
+one-day risk forecasts, not for a correlation that must hold over the life of a product.
+
+% ==================================================================
+\section{Mean Reversion of the Realised Correlation}\label{sec:reversion}
+% ==================================================================
+The DCC result depends on the model. A model-free check uses the rolling correlation $\hat\rho^{(w)}_t$ over a
+window of $w$ days. On its Fisher transform, the augmented Dickey--Fuller test \cite{dickeyfuller1979} tests the null
+of a unit root (no mean reversion), and the first-order autocorrelation between consecutive non-overlapping windows
+measures the persistence from one window to the next.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}rcccccc@{}}
+\toprule
+Window (days) & Mean & Std & Min & Max & ADF $p$ & AR(1) non-overlapping \\
+\midrule
+63  & 0.61 & 0.21 & $-0.25$ & 0.92 & 0.0004 & 0.59 \\
+126 & 0.61 & 0.19 & $-0.08$ & 0.90 & 0.054  & 0.60 \\
+252 & 0.61 & 0.17 & $0.07$  & 0.89 & 0.13   & 0.70 \\
+\bottomrule
+\end{tabular}
+\caption{Rolling correlation of daily returns: level, dispersion and mean reversion.}
+\label{tab:reversion}
+\end{table}
+
+At the quarterly window, the unit root is rejected ($p = 0.0004$) and two consecutive quarters share an
+autocorrelation of 0.59 only: short-term correlation reverts (Table~\ref{tab:reversion}). At the yearly window the
+test loses power (overlapping windows, about 20 independent years) and the persistence is higher (0.70). The data
+show two time scales: a slowly moving long-run level, which moved in 2015, and fast fluctuations around it. A pricing
+correlation has to answer two questions: which long-run level, and how fast the current value reverts to it.
+
+% ==================================================================
+\section{Asymmetry and Tails}\label{sec:tails}
+% ==================================================================
+The multi-asset Black--Scholes model imposes a Gaussian copula. Three statistics test it, each compared to its value
+under a bivariate normal distribution with the same correlation, since a Gaussian has non-trivial values of these
+statistics too.
+
+\subsection{Exceedance correlations}
+Following Longin and Solnik \cite{longinsolnik2001}, the exceedance correlation at threshold $q$ is the correlation of
+the standardised returns conditional on both being below $-q$ standard deviations (down) or above $q$ (up). For a
+Gaussian it decreases with $q$ and is symmetric; the benchmark is computed by simulation ($2\times10^6$ draws).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}cl rcc rcc@{}}
+\toprule
+ & & \multicolumn{3}{c}{Raw returns} & \multicolumn{3}{c}{GARCH residuals} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+$q$ (sd) & Side & $n$ & Data & Gaussian & $n$ & Data & Gaussian \\
+\midrule
+0   & down & 1{,}996 & 0.51 & 0.36 & 1{,}994 & 0.50 & 0.37 \\
+    & up   & 2{,}029 & 0.51 & 0.36 & 2{,}029 & 0.44 & 0.36 \\
+0.5 & down & 862 & 0.46 & 0.30 & 917 & 0.45 & 0.31 \\
+    & up   & 819 & 0.52 & 0.30 & 898 & 0.42 & 0.31 \\
+1   & down & 349 & 0.33 & 0.25 & 364 & 0.37 & 0.25 \\
+    & up   & 288 & 0.45 & 0.25 & 325 & 0.42 & 0.26 \\
+1.5 & down & 135 & 0.28 & 0.20 & 143 & 0.24 & 0.21 \\
+    & up   & 119 & 0.36 & 0.22 & 109 & 0.47 & 0.22 \\
+\bottomrule
+\end{tabular}
+\caption{Exceedance correlations against a Gaussian dependence with the same correlation.}
+\label{tab:exceedance}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{exceedance_correlation.png}{\textwidth}
+\caption{Exceedance correlations (left of zero: both returns below $-q$; right: both above $q$).}
+\label{fig:exceedance}
+\end{figure}
+
+The exceedance correlations are above the Gaussian benchmark at every threshold and on both sides
+(Table~\ref{tab:exceedance}, Figure~\ref{fig:exceedance}). Part of the gap comes from the time variation of the
+correlation itself: a mixture of Gaussians with different correlations has fatter joint tails than a single
+Gaussian. On the GARCH residuals the up side stays high at 1.5 standard deviations (0.47 against 0.22) while the down
+side comes back to the Gaussian level (0.24 against 0.21). For this pair there is no sign of a correlation that
+rises in sell-offs; the strongest co-movements are joint rallies, consistent with sector-wide news for luxury stocks.
+
+\subsection{Tail dependence}
+On the ranks $U^i_t$ of the returns, the empirical lower tail dependence at level $q$ is
+$\hat\lambda_L(q) = \#\{t : U^1_t < q,\, U^2_t < q\} / (nq)$, and $\hat\lambda_U(q)$ is defined in the same way on the
+upper tail \cite{joe1997}. For a Gaussian copula $\lambda_L(q) \to 0$ as $q \to 0$.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}c ccc ccc c@{}}
+\toprule
+ & \multicolumn{2}{c}{Raw returns} & & \multicolumn{2}{c}{GARCH residuals} & & \\
+\cmidrule(lr){2-3}\cmidrule(lr){5-6}
+$q$ & Lower & Upper & & Lower & Upper & & Gaussian \\
+\midrule
+10\% & 0.51 & 0.46 & & 0.50 & 0.41 & & 0.39 \\
+5\%  & 0.41 & 0.39 & & 0.43 & 0.36 & & 0.31 \\
+1\%  & 0.20 & 0.43 & & 0.30 & 0.27 & & 0.19 \\
+\bottomrule
+\end{tabular}
+\caption{Empirical tail dependence against a Gaussian copula with correlation 0.605. At 1\% the lower tail of the raw
+returns rests on 11 joint observations and the upper tail on 24.}
+\label{tab:tail}
+\end{table}
+
+Both tails are above the Gaussian at 10\% and 5\% (Table~\ref{tab:tail}). At 1\% the estimates rest on a few dozen
+joint observations at most and are not conclusive on their own; on raw returns the upper tail stands out (0.43
+against 0.19), in line with the exceedance correlations.
+
+\subsection{Volatility and market regimes}
+The 21-day rolling correlation is averaged over the days in the top and bottom 20\% of the average individual
+volatility, and over the days when the equally weighted basket fell or rose over the previous 21 days. Conditioning
+on high volatility raises the sample correlation even when the true correlation is constant \cite{forbesrigobon2002};
+the benchmark applies the same statistics to simulated returns with a constant correlation and the realised
+volatility path of the data (average over 50 simulations).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Regime & Data & Constant-correlation benchmark \\
+\midrule
+High volatility (top 20\%)    & 0.66 & 0.62 \\
+Low volatility (bottom 20\%)  & 0.45 & 0.55 \\
+Down market (21-day basket $<0$) & 0.64 & 0.59 \\
+Up market (21-day basket $>0$)   & 0.58 & 0.59 \\
+All days                         & 0.61 & 0.59 \\
+\bottomrule
+\end{tabular}
+\caption{Mean 21-day rolling correlation by regime.}
+\label{tab:regimes}
+\end{table}
+
+The correlation is 0.21 higher in high-volatility regimes than in low-volatility ones, against 0.08 for the benchmark
+(Table~\ref{tab:regimes}): about 40\% of the gap is the conditioning bias, the rest is a genuine link between
+correlation and volatility. Down markets show a slightly higher correlation than up markets (0.64 against 0.58, with
+a benchmark of 0.59 on both sides). The correlation is thus linked to the volatility level, which matters for
+worst-of products since their value is concentrated in the scenarios where the volatility is high.
+
+% ==================================================================
+\section{Synthesis and Consequences for the Model}\label{sec:synthesis}
+% ==================================================================
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}p{2.6cm}p{5.4cm}p{6.4cm}@{}}
+\toprule
+Test & Result & Consequence for the model \\
+\midrule
+Marginals & Fat tails, strong volatility clustering & Test the dependence on GARCH residuals; the volatility input matters as much as the correlation \\
+Horizon & Correlation flat from 1 to 60 days & Daily returns, no synchronicity correction \\
+Constancy & Rejected (Fisher, Engle--Sheppard); shift around 2015 & The window or the weighting is first-order; a 20-year average is biased \\
+CCC / EWMA / DCC & DCC preferred; $a+b = 0.9915$, half-life 82 days; EWMA $\lambda = 0.977$ & A mean-reverting forecast over the product horizon is supported against a flat EWMA forecast \\
+Mean reversion & Short-term correlation reverts; slow long-run level & Two scales: long-run level and reversion speed \\
+Tails and regimes & Joint tails fatter than Gaussian, mostly upside; higher correlation in high volatility & A Gaussian copula understates joint extremes; correlation linked to the volatility level \\
+\bottomrule
+\end{tabular}
+\caption{Summary of the tests.}
+\label{tab:synthesis}
+\end{table}
+
+The tests (Table~\ref{tab:synthesis}) set the list of non-stochastic candidates for \eqref{eq:non-stochastic},
+which the next part of the study will build and compare:
+\begin{itemize}
+\item \emph{Historical correlation} over a window (full sample, one year, three years, since the 2015 shift, or
+equal to the maturity): the benchmark, whose dependence on the window measures the estimation risk;
+\item \emph{EWMA}, on raw returns or on GARCH residuals, with $\lambda$ chosen by likelihood or by the forecast error
+over the product horizon;
+\item \emph{DCC forecast}: the average correlation over the life of the product, formula \eqref{eq:dcc-average},
+which is the specification preferred by the likelihood and makes the pricing correlation depend on the maturity;
+\item \emph{blend of a short-term and a long-term estimate} with maturity-dependent weights, a simple version of the
+DCC forecast;
+\item \emph{regime-switching forecast} \cite{hamilton1989}: the filtered regime probabilities give a deterministic
+expected correlation, motivated by the 2015 shift and by the link with volatility;
+\item \emph{Student-$t$ copula} instead of the Gaussian one: a fixed number of degrees of freedom adds tail
+dependence, motivated by Section~\ref{sec:tails}.
+\end{itemize}
+The candidates will be ranked out of sample on two criteria: the error of the forecast against the correlation
+realised over the life of the product, and the impact on the prices of worst-of and best-of options.
+
+% ==================================================================
+\section{Implementation}\label{sec:implementation}
+% ==================================================================
+\begin{itemize}
+\item \code{Data/Equity/download\_data.py}: downloads the raw and adjusted closes and the dividends of LVMH and
+Hermès from Yahoo Finance into \code{Data/Equity/};
+\item \code{Models/correlation\_tests.py}: all the tests of this report (marginal tests, horizon, Fisher equality
+test, Engle--Sheppard, CCC/EWMA/DCC fits and likelihood ratios, mean reversion, exceedance correlations, tail
+dependence, regimes with their Gaussian or constant-correlation benchmarks). The recursions on $Q_t$ are linear
+filters, so a likelihood evaluation over 5{,}588 days takes about a millisecond;
+\item \code{Models/correlation.ipynb}: the notebook of this report;
+\item \code{Reports/Correlation/make\_figures.py}: extracts the figures from the executed notebook.
+\end{itemize}
+
+\begin{lstlisting}
+import pandas as pd
+import correlation_tests as ct
+
+raw = pd.read_csv("Data/Equity/LVMH_HERMES_Daily.csv", index_col="Date", parse_dates=True)
+px = raw[["LVMH_AdjClose", "HERMES_AdjClose"]].set_axis(["LVMH", "HERMES"], axis=1)
+r = ct.log_returns(px)
+eps, garch = ct.garch_standardise(r)                    # GARCH(1,1)-t residuals
+models, lr_tests, cond_rho, params = ct.compare_conditional_models(eps)
+print(ct.engle_sheppard_test(eps), lr_tests, params["DCC"])
+\end{lstlisting}
+
+% ==================================================================
+\section{Limitations}\label{sec:limitations}
+% ==================================================================
+\begin{itemize}
+\item \emph{Two stocks, one period.} The conclusions hold for LVMH and Hermès over 2005--2026; the asymmetry of the
+tails in particular (joint rallies rather than joint crashes) is specific to this pair and may not hold for a basket
+of indices or of stocks from different sectors.
+\item \emph{Assumptions of the tests.} The Fisher equality test assumes independent normal observations; it is
+repeated on GARCH residuals, which removes the volatility clusters but not the fat tails. The likelihood ratio of CCC
+against DCC has a parameter that is not identified under the null and the EWMA lies on the boundary of the DCC
+parameter space, so the $\chi^2$ $p$-values are indicative; with ratios of 60 to 443 no correction changes the
+conclusions.
+\item \emph{Two-step estimation.} The correlation parameters are estimated given the GARCH fits, with a Gaussian
+quasi-likelihood although the residuals are Student; the standard errors of the second step are not corrected for
+the first.
+\item \emph{In-sample.} All tests use the full sample. The model choice will be validated out of sample.
+\item \emph{Data.} Yahoo Finance prices are free but unofficial; the adjusted close relies on Yahoo's dividend
+adjustment.
+\end{itemize}
+
+% ==================================================================
+\section{Conclusion}\label{sec:conclusion}
+% ==================================================================
+Over 21 years of daily data, the correlation between LVMH and Hermès averages 0.61 but is neither constant nor a
+random walk. It shifted from about 0.47 to 0.74 around 2015, fluctuates by $\pm 0.2$ at the quarterly scale and
+reverts with a half-life of about four months. A mean-reverting DCC model is preferred to both a constant correlation
+and an integrated EWMA, and the joint extremes are more frequent than a Gaussian dependence implies, mostly on the
+upside. For a non-stochastic pricing correlation, the main question is therefore less how to estimate the
+correlation of today than how much of it to keep over the life of the product: with the fitted DCC, 41\% of today's
+deviation over one year and 16\% over three years.
+
+% ==================================================================
+\appendix
+\section{Notation}
+% ==================================================================
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$S^i_t$, $X^i_T = S^i_T / S^i_0$ & Price and performance of stock $i$ \\
+$m_T$, $M_T$ & Worst and best performance \\
+$r^i_t$ & Daily log return (adjusted close) \\
+$\sigma_{i,t}$, $\varepsilon^i_t$ & GARCH conditional volatility and standardised residual \\
+$\rho$, $\rho_t$, $\bar\rho$ & Correlation, conditional correlation, long-run correlation \\
+$Q_t$, $\bar Q$ & Pseudo-correlation matrix of the DCC and its target \\
+$\lambda$ & EWMA decay \\
+$a$, $b$ & DCC innovation and persistence parameters \\
+$w(H)$ & Weight of the current deviation in the average forecast over $H$ days \\
+$\lambda_L(q)$, $\lambda_U(q)$ & Empirical lower and upper tail dependence at level $q$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ==================================================================
+\begin{thebibliography}{99}
+\bibitem{yfinance} R. Aroussi, \emph{yfinance: download market data from Yahoo! Finance's API},
+\url{https://github.com/ranaroussi/yfinance}.
+\bibitem{stulz1982} R. M. Stulz, Options on the minimum or the maximum of two risky assets: analysis and
+applications, \emph{Journal of Financial Economics}, 10(2):161--185, 1982.
+\bibitem{jarquebera1980} C. M. Jarque and A. K. Bera, Efficient tests for normality, homoscedasticity and serial
+independence of regression residuals, \emph{Economics Letters}, 6(3):255--259, 1980.
+\bibitem{ljungbox1978} G. M. Ljung and G. E. P. Box, On a measure of lack of fit in time series models,
+\emph{Biometrika}, 65(2):297--303, 1978.
+\bibitem{engle1982} R. F. Engle, Autoregressive conditional heteroscedasticity with estimates of the variance of
+United Kingdom inflation, \emph{Econometrica}, 50(4):987--1007, 1982.
+\bibitem{bollerslev1986} T. Bollerslev, Generalized autoregressive conditional heteroskedasticity, \emph{Journal of
+Econometrics}, 31(3):307--327, 1986.
+\bibitem{bollerslev1987} T. Bollerslev, A conditionally heteroskedastic time series model for speculative prices and
+rates of return, \emph{Review of Economics and Statistics}, 69(3):542--547, 1987.
+\bibitem{bollerslev1990} T. Bollerslev, Modelling the coherence in short-run nominal exchange rates: a multivariate
+generalized ARCH model, \emph{Review of Economics and Statistics}, 72(3):498--505, 1990.
+\bibitem{fisher1921} R. A. Fisher, On the ``probable error'' of a coefficient of correlation deduced from a small
+sample, \emph{Metron}, 1:3--32, 1921.
+\bibitem{epps1979} T. W. Epps, Comovements in stock prices in the very short run, \emph{Journal of the American
+Statistical Association}, 74(366):291--298, 1979.
+\bibitem{englesheppard2001} R. F. Engle and K. Sheppard, Theoretical and empirical properties of dynamic conditional
+correlation multivariate GARCH, NBER Working Paper 8554, 2001.
+\bibitem{engle2002} R. F. Engle, Dynamic conditional correlation: a simple class of multivariate generalized
+autoregressive conditional heteroskedasticity models, \emph{Journal of Business \& Economic Statistics},
+20(3):339--350, 2002.
+\bibitem{riskmetrics1996} J.P. Morgan and Reuters, \emph{RiskMetrics --- Technical Document}, 4th edition, 1996.
+\bibitem{dickeyfuller1979} D. A. Dickey and W. A. Fuller, Distribution of the estimators for autoregressive time
+series with a unit root, \emph{Journal of the American Statistical Association}, 74(366):427--431, 1979.
+\bibitem{longinsolnik2001} F. Longin and B. Solnik, Extreme correlation of international equity markets,
+\emph{Journal of Finance}, 56(2):649--676, 2001.
+\bibitem{joe1997} H. Joe, \emph{Multivariate Models and Dependence Concepts}, Chapman and Hall, 1997.
+\bibitem{forbesrigobon2002} K. J. Forbes and R. Rigobon, No contagion, only interdependence: measuring stock market
+comovements, \emph{Journal of Finance}, 57(5):2223--2261, 2002.
+\bibitem{hamilton1989} J. D. Hamilton, A new approach to the economic analysis of nonstationary time series and the
+business cycle, \emph{Econometrica}, 57(2):357--384, 1989.
+\end{thebibliography}
+
+\end{document}

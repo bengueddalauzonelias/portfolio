@@ -48,6 +48,9 @@ Produits/               Product pricers, one notebook per product
   callable_range_accrual/  Callable SOFR range accrual under Hull–White:
                            static replication, Monte Carlo + Longstaff–Schwartz,
                            exact backward induction
+  callable_bond/           Callable bonds (European, Bermudan, American) under Hull–White:
+                           PDE, trinomial tree and Longstaff–Schwartz, OAS, yield to worst,
+                           key-rate durations, exercise boundary
 
 Data/                   Market data
   CAC40_MarketOptions_12022025.csv, EURIBOR6M_ZCRates_12022025.csv

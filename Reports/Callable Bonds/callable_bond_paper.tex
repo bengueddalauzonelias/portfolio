@@ -1,0 +1,732 @@
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+% Packages
+% ------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
+
+% ------------------------------------------------------------------
+% Macros
+% ------------------------------------------------------------------
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\AI}{\mathrm{AI}}
+
+% Images extracted from Products/callable_bond/callable_bond_pricer.ipynb by make_figures.py ; a framed placeholder
+% is printed while a file is missing.
+\newcommand{\figfile}[2]{%
+  \IfFileExists{figures/#1}{\includegraphics[width=#2]{figures/#1}}%
+  {\fbox{\parbox[c][4cm][c]{#2}{\centering\small missing figure:\\ \texttt{figures/#1}}}}}
+
+\lstset{basicstyle=\ttfamily\footnotesize, keywordstyle=\color{blue!70!black}, commentstyle=\color{gray},
+        stringstyle=\color{teal}, frame=single, breaklines=true, language=Python, showstringspaces=false}
+
+% ------------------------------------------------------------------
+\title{Callable Bonds under the Hull--White Model:\\
+European, Bermudan and American Calls with Three Numerical Methods}
+\author{Elias Benguedda}
+\date{November 2026}
+
+\begin{document}
+\emergencystretch=3em
+\maketitle
+
+\begin{abstract}
+We price fixed-rate callable bonds with issuer default risk under a one-factor Hull--White short rate fitted to the
+euro area AAA government curve of 5 October 2026 and calibrated to co-terminal swaptions ($a = 0.0863$,
+$\sigma = 111.9$bp, RMSE 0.76bp of normal volatility), with a deterministic default intensity bootstrapped from CDS
+spreads. The European, Bermudan and American calls differ only by the set of dates where the issuer's choice
+$V \leftarrow \min(V, K + \AI)$ is applied, and three independent methods solve the same problem: a Crank--Nicolson
+PDE, a Hull--White trinomial tree with unequal time steps, and Monte Carlo with a Longstaff--Schwartz call policy
+estimated and applied on independent paths. On a seasoned 4.75\% bond maturing in 2036 and callable at par from
+2029, the three methods agree within 0.2 cent per 100 (tree) and 1.5 standard errors (Monte Carlo); the PDE
+reprices the straight bond to $3\times10^{-7}$ and the European callable bond to $10^{-4}$ of Jamshidian's closed
+form. The issuer's option is worth 1.20, 1.74 and 1.85 per 100 for the European, Bermudan and American calls (6.74
+to 7.40 for the same bond without default), the OAS at a clean price of 98.50 falls from 139bp (Z-spread) to 106,
+93 and 90bp, and the effective convexity turns from $+67$ to between $-70$ and $-92$. At identical calibration to
+European swaptions, the mean reversion moves the American price by up to 0.44 per 100 and the European by 0.01:
+the value of the right to choose the call date is model risk.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ==================================================================
+\section{Introduction}
+% ==================================================================
+A callable bond is a fixed-rate bond that its issuer may redeem before maturity at a contractual call price plus
+accrued interest. Issuers call when rates, or their own credit spread, have fallen enough to refinance more
+cheaply; the bondholder is short this option and is compensated by a higher coupon. From the holder's side,
+\begin{equation}\label{eq:decomposition}
+\text{callable bond} = \text{straight bond} - \text{issuer call option}.
+\end{equation}
+Three exercise styles are common: \emph{European} (one call date, at the end of the call protection),
+\emph{Bermudan} (every coupon date after the protection, the most frequent structure for corporate and agency
+bonds) and \emph{American} (any time in the call period, typical of US corporate bonds with make-whole or par
+calls). The call is an option on a coupon bond, hence on rates: a short-rate model fitted to the yield curve is the
+natural framework \cite{hull1990,brigo2006,andersen2010}, and the one-factor Hull--White model is the market
+standard for this product because zero-coupon bonds and their options are in closed form.
+
+This report documents a complete pricer: from a term sheet in calendar dates to prices, spreads, yields, risk
+measures and the exercise policy, for the three styles. Its distinctive feature is that every number is obtained
+by three independent methods (PDE, tree, Monte Carlo) and checked against closed forms where they exist. Section
+\ref{sec:model} sets out the model and the product, Section~\ref{sec:methods} the three numerical methods,
+Section~\ref{sec:validation} the validation, Section~\ref{sec:results} the prices, spreads and risk of an
+illustrative bond, Section~\ref{sec:exercise} the exercise policy and Section~\ref{sec:modelrisk} the model risk.
+
+% ==================================================================
+\section{Model and Product}\label{sec:model}
+% ==================================================================
+
+\subsection{Hull--White short rate}
+Under the risk-neutral measure $\Q$, the short rate follows \cite{hull1990}
+\begin{equation}
+\dd r_t = \big(\theta(t) - a r_t\big)\,\dd t + \sigma\,\dd W_t,
+\end{equation}
+written $r_t = x_t + \alpha(t)$ with the Ornstein--Uhlenbeck state $\dd x_t = -a x_t\,\dd t + \sigma\,\dd W_t$,
+$x_0 = 0$, and the deterministic shift
+\begin{equation}
+\alpha(t) = f(0,t) + \frac{\sigma^2}{2a^2}\big(1 - e^{-at}\big)^2,
+\end{equation}
+which makes the model reprice every discount factor $P(0,T)$ of the initial curve, $f(0,t)$ being the
+instantaneous forward rate \cite{brigo2006}. Zero-coupon bonds are exponential-affine in the state:
+\begin{equation}\label{eq:zcb}
+\begin{aligned}
+P(t,T;x) &= \frac{P(0,T)}{P(0,t)}\exp\!\big(-B(t,T)\,x - \Gamma(t,T)\big), \qquad
+B(t,T) = \frac{1 - e^{-a(T-t)}}{a},\\
+\Gamma(t,T) &= \frac{\sigma^2}{2a^2}B(t,T)\big(1-e^{-at}\big)^2 + \frac{\sigma^2}{4a}\big(1-e^{-2at}\big)B(t,T)^2.
+\end{aligned}
+\end{equation}
+A higher state lowers every bond price: the issuer calls when $x$, hence $r$, is low.
+
+\subsection{Issuer default}
+Default is the first jump of a Cox process with deterministic, piecewise constant intensity $\lambda(t)$,
+independent of rates \cite{lando1998,duffie1999}; the survival probability is
+$Q(0,t) = \exp(-\int_0^t \lambda)$. At default the holder receives $RN$ (recovery of par). The intensities are
+bootstrapped sequentially from CDS par spreads (quarterly premiums with accrual on default), each one repricing its
+CDS exactly. With $\lambda \equiv 0$ the bond is default-free (government or agency).
+
+\subsection{The product}
+The bond pays coupons $c_i$ at dates $T_1 < \dots < T_n$ and the notional $N$ at $T_n$. The issuer may redeem it on
+the call set $\mathcal{T}$ at the clean call price $K(t)$ plus accrued interest $\AI(t)$; on a coupon date the holder
+receives the coupon and the call price. The three styles are
+\begin{equation}
+\mathcal{T}^{\mathrm{Eur}} = \{T_c\}, \qquad
+\mathcal{T}^{\mathrm{Ber}} = \{T_i : T_c \le T_i < T_n\}, \qquad
+\mathcal{T}^{\mathrm{Am}} = [T_c, T_n],
+\end{equation}
+with $T_c$ the end of the call protection. The term sheet is given in calendar dates: model time is ACT/365F from
+the valuation date, coupon dates roll back from the maturity date, each regular coupon pays $Nc/f$ (ACT/ACT ICMA) and
+$\AI(t)$ is the running coupon pro rata of its period. A seasoned bond carries accrued interest at the valuation date;
+the model gives the \emph{dirty} price, and the market quotes the \emph{clean} price, dirty minus $\AI(0)$.
+
+\subsection{Pricing problem}
+The issuer minimises the value of its debt. Before default, the value $V(t,x)$ of the bond is the value of an
+optimal stopping problem, $V(0,0) = \inf_{\tau \in \mathcal{T}} \E\big[\text{discounted flows until } \tau\big]$,
+and by Feynman--Kac it solves, between payment and call dates,
+\begin{equation}\label{eq:pde}
+\partial_t V - a x\,\partial_x V + \tfrac12\sigma^2\,\partial_{xx} V - \big(x + \alpha(t) + \lambda(t)\big)V
++ \lambda(t) R N = 0,
+\end{equation}
+with $V(T_n^-, x) = N + c_n$ and, at a date $t$,
+\begin{equation}\label{eq:jump}
+V(t^-, x) = \min\big(V(t^+, x),\ K(t) + \AI(t)\big)\,\mathbf{1}_{t \in \mathcal{T}} + V(t^+,x)\,\mathbf{1}_{t \notin \mathcal{T}} + c(t),
+\end{equation}
+where $c(t)$ is the coupon paid at $t$, if any. Default enters as an extra discount rate $\lambda$ and a recovery
+source term. The three styles differ only by $\mathcal{T}$: one solver serves all of them. On a call date, the
+\emph{critical state} $x^*(t) = \max\{x : V(t^+,x) \ge K(t) + \AI(t)\}$ separates calling (below) from continuing,
+and $r^*(t) = x^*(t) + \alpha(t)$ is the critical short rate.
+
+% ==================================================================
+\section{Numerical Methods}\label{sec:methods}
+% ==================================================================
+The three methods share the time grid: the valuation date, every coupon, call and CDS pillar date, and between two
+of them equal steps of at most $1/100$ year (975 steps for the bond of Section~\ref{sec:results}). On the American
+call period, the issuer may call at every node.
+
+\subsection{Crank--Nicolson PDE}
+Since $\alpha$ and $\lambda$ do not depend on $x$, on each step $[t_{k-1}, t_k]$ the solution is
+\begin{equation}
+V(t_{k-1}, x) = e^{-\int_{t_{k-1}}^{t_k}\alpha}\,\frac{Q(0,t_k)}{Q(0,t_{k-1})}\,U(t_{k-1},x)
++ RN\Big(1 - \frac{Q(0,t_k)}{Q(0,t_{k-1})}\Big) P\big(t_{k-1}, t_{k-1} + \tfrac{\Delta t}{2}; x\big),
+\end{equation}
+where $U$ solves the time-homogeneous equation $U_t - a x U_x + \frac12\sigma^2 U_{xx} - xU = 0$ with
+$U(t_k) = V(t_k)$, and the recovery is paid at mid-step. The deterministic discounting $\int\alpha$ is exact (closed
+form), and the operator of $U$ is constant, so each step is one tridiagonal solve of the $\theta$-scheme
+\begin{equation}
+(I - \theta\,\Delta t\,L)\,U^{k-1} = \big(I + (1-\theta)\,\Delta t\,L\big)\,U^{k},
+\end{equation}
+with $L$ the central-difference discretisation of $-ax\partial_x + \frac12\sigma^2\partial_{xx} - x$, one-sided and
+upwind at the boundaries, where the drift points inward. The grid is uniform in $x$ over $\pm 6$ standard deviations
+of $x(T_n)$ with 401 nodes. $\theta = \frac12$ (Crank--Nicolson) except for two fully implicit steps after each
+discrete call date (Rannacher smoothing \cite{rannacher1984}), which damp the oscillations created by the kink of
+the $\min$ in~\eqref{eq:jump}. The PDE returns $V(0,x)$ for every initial state, hence the price as a function of
+$r(0)$, and the critical states $x^*(t)$.
+
+\subsection{Trinomial tree}
+The Hull--White tree \cite{hull1994} is built on the state $x$ and on the same unequal time grid. Level $k+1$ has its
+own spacing, set by the variance of the step that leads to it,
+\begin{equation}
+\Delta x_{k+1} = \sqrt{3V_k}, \qquad V_k = \sigma^2\,\frac{1 - e^{-2ah_k}}{2a}, \qquad h_k = t_{k+1} - t_k.
+\end{equation}
+A node $x$ of level $k$ branches to the node $j\,\Delta x_{k+1}$ nearest to its conditional mean $x e^{-ah_k}$ and
+to its two neighbours. With $\eta = (xe^{-ah_k} - j\Delta x_{k+1})/\Delta x_{k+1} \in [-\frac12, \frac12]$ and
+$m = \frac13 + \eta^2$, the probabilities matching the mean and variance are
+\begin{equation}
+p_u = \frac{m + \eta}{2}, \qquad p_m = 1 - m, \qquad p_d = \frac{m - \eta}{2},
+\end{equation}
+all positive ($p_m \ge \frac{5}{12}$, $p_u, p_d \ge \frac{1}{24}$) whatever the step. Levels are truncated at
+$\pm 7$ standard deviations of $x(t)$ (179 nodes at maturity). The shift is not taken from the closed form: the
+discount factor of a node over a step is $e^{-(\alpha_k + x)h_k}$ and $\alpha_k$ is solved by forward induction of
+the Arrow--Debreu prices $q_{k}(x)$,
+\begin{equation}
+\sum_{x} q_k(x)\,e^{-(\alpha_k + x)h_k} = P(0, t_{k+1}), \qquad
+q_{k+1}(x') = \sum_{x \to x'} q_k(x)\,e^{-(\alpha_k + x)h_k}\,p_{x \to x'},
+\end{equation}
+so that the tree reprices every discount factor of the curve exactly. Default and recovery enter as in the PDE. The
+backward induction applies~\eqref{eq:jump} at the nodes.
+
+\subsection{Monte Carlo and Longstaff--Schwartz}
+The pair $(x_t, \int_0^t x_s\,\dd s)$ is Gaussian and simulated exactly on the grid of coupon, call and (with
+recovery) monthly dates, which gives the state and the bank-account discount factor $D(0,t) = e^{-\int_0^t r}$ on
+each path without discretisation bias. The call policy is that of Longstaff and Schwartz \cite{longstaff2001},
+adapted to an option held by the issuer (Algorithm~\ref{alg:lsm}). Two choices matter:
+\begin{itemize}
+\item \emph{Regressors.} Besides $1, z, z^2, z^3$ ($z = x/\mathrm{sd}(x_t)$), the closed-form value at $t$ of the
+remaining straight flows, coupons, redemption and recovery, $S_t(x)$, computed with~\eqref{eq:zcb}. Since the call
+can only lower the bond, the continuation value is below $S_t(x)$: only the paths with $S_t(x) > K + \AI$ can be
+called, and only they are regressed.
+\item \emph{Out-of-sample policy.} The coefficients are estimated on 50{,}000 paths and applied to 50{,}000
+independent ones. The true price is the infimum over call policies; any feasible policy gives a higher bond price, so
+the out-of-sample price is an \emph{upper bound} of the true price up to Monte Carlo noise, whereas the in-sample
+price reuses the paths that defined the policy.
+\end{itemize}
+The American call is approximated by monthly call dates. Antithetic variates reduce the variance; the standard
+error is computed on the pair averages.
+
+\begin{algorithm}[h]
+\caption{Longstaff--Schwartz for a callable bond (issuer's call)}
+\label{alg:lsm}
+\begin{algorithmic}[1]
+\State simulate $(x, D)$ on the dates $t_1 < \dots < t_M$; \quad $\Pi \gets 0$ \Comment{PV at 0 of the flows after $t_k$}
+\For{$k = M, \dots, 1$}
+  \If{$t_k$ is a call date, strike $\kappa_k = K(t_k) + \AI(t_k)$}
+    \State candidates: paths with $S_{t_k}(x) > \kappa_k$
+    \State fit $\beta_k$: regress $\Pi / (D(0,t_k)Q(0,t_k))$ on $\varphi(x) = (1,z,z^2,z^3,S_{t_k}(x))$ over the candidates
+    \State call on the candidates where $\varphi(x)^\top\beta_k > \kappa_k$: \quad $\Pi \gets \kappa_k\,D(0,t_k)\,Q(0,t_k)$
+  \EndIf
+  \State $\Pi \gets \Pi + c(t_k)\,D(0,t_k)\,Q(0,t_k) + RN\,\big(Q(0,t_{k-1}) - Q(0,t_k)\big)\tfrac12\big(D(0,t_{k-1}) + D(0,t_k)\big)$
+\EndFor
+\State re-simulate independent paths and repeat lines 2--8 with the fitted $\beta_k$; \quad price $= \overline{\Pi}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Closed forms used as benchmarks}
+\emph{Straight bond.} With default independent of rates,
+\begin{equation}
+B_0 = \sum_i c_i P(0,T_i)Q(0,T_i) + RN\int_0^{T_n} P(0,t)\,\big(-\dd Q(0,t)\big).
+\end{equation}
+
+\emph{European call, zero recovery} \cite{jamshidian1989}. At $T_c$, given survival, the bond is worth
+$\sum_{T_i > T_c} \tilde c_i P(T_c, T_i; x)$ with $\tilde c_i = c_i Q(0,T_i)/Q(0,T_c)$, decreasing in $x$. With $x^*$
+such that this sum equals the strike $\kappa = K(T_c) + \AI(T_c)$ and $\kappa_i = P(T_c,T_i;x^*)$, the option is a
+portfolio of options on zero-coupon bonds, held only if the issuer survives to $T_c$:
+\begin{equation}
+V^{\mathrm{Eur}}_0 = B_0 - Q(0,T_c)\sum_{T_i > T_c}\tilde c_i\,\mathrm{ZBC}(0, T_c, T_i, \kappa_i),
+\end{equation}
+where $\mathrm{ZBC}$ is the Hull--White zero-coupon bond call
+\begin{equation}
+\begin{aligned}
+\mathrm{ZBC}(0,T_c,T_i,\kappa_i) &= P(0,T_i)\Phi(h) - \kappa_i P(0,T_c)\Phi(h - \sigma_p),\\
+\sigma_p &= \sigma B(T_c,T_i)\sqrt{\tfrac{1-e^{-2aT_c}}{2a}}, \qquad
+h = \frac{1}{\sigma_p}\ln\frac{P(0,T_i)}{\kappa_i P(0,T_c)} + \frac{\sigma_p}{2}.
+\end{aligned}
+\end{equation}
+
+\subsection{Spreads, yields and risk}
+\begin{itemize}
+\item \emph{OAS} \cite{kalotay1993}: the constant spread $s$ such that discounting at $r_t + s$ (no explicit default)
+reprices the dirty market price with the call; the \emph{Z-spread} is the same spread without the call. The
+difference measures the share of the yield that pays for the short option.
+\item \emph{Yield to worst}: the lowest of the yields to each redemption date (call dates at $K + \AI$, and maturity
+at $N$), compounded at the coupon frequency.
+\item \emph{Effective duration, convexity, DV01}: full repricing under $\pm 10$bp parallel shifts of the zero curve,
+the Hull--White shift refitted to each curve, $a$ and $\sigma$ fixed. \emph{Vega}: per bp of $\sigma$.
+\emph{CS01}: per bp of parallel shift of the hazard rates.
+\item \emph{Key-rate durations} \cite{ho1992}: triangular shifts of each pillar zero rate, linear to the neighbouring
+pillars, applied to the base curve sampled weekly and interpolated linearly. Bumping a single pillar of the
+monotone convex curve instead does not work: that interpolation is not linear in its inputs, and the single-pillar
+bumps add up to 7.11 instead of 7.56 for the straight bond. The triangular shifts add up to a parallel shift exactly.
+\end{itemize}
+
+% ==================================================================
+\section{Market Data and Calibration}\label{sec:data}
+% ==================================================================
+\emph{Curve.} The risk-free curve is the ECB euro area AAA government spot curve of 5 October 2026 (18 pillars from
+3 months to 30 years; zero rates 2.85\% at 1 year, 3.06\% at 3 years, 3.50\% at 10 years), interpolated by monotone
+convex \cite{benguedda2026yield}.
+
+\emph{Volatility.} The call is an option on the co-terminal swaps, ending at the bond maturity. $(a, \sigma)$ are
+calibrated to the ATM co-terminal European receiver swaptions $T \times (9.70 - T)$, $T = 1,\dots,5$, minimising the
+pricing errors divided by the market vega, i.e. errors in normal volatility. The normal volatilities are an
+\emph{illustrative} EUR grid (no free quotes): about 77 to 79bp. Result: $a = 0.0863$, $\sigma = 111.9$bp, RMSE
+0.76bp, maximum error 1.17bp.
+
+\emph{Credit.} The CDS spreads of the issuer are \emph{illustrative} for a BBB name: 60, 85, 110, 125 and 140bp at
+1, 3, 5, 7 and 10 years, $R = 40\%$. The bootstrapped hazard rates are 1.00\%, 1.63\%, 2.53\%, 2.84\% and 3.12\%; the
+10-year survival probability is 78.4\%.
+
+\emph{Term sheet} (illustrative). Issued 15/06/2024, maturity 15/06/2036, 4.75\% annual coupon, notional 100, non-call
+until 15/06/2029, callable at par. At the valuation date the maturity is 9.70 years, the first call 2.70 years and the
+accrued interest 1.4575. The European bond is callable on 15/06/2029 only, the Bermudan on the seven coupon dates
+2029 to 2035, the American at any time from 15/06/2029 to maturity.
+
+% ==================================================================
+\section{Validation}\label{sec:validation}
+% ==================================================================
+
+\subsection{Closed forms}
+Table~\ref{tab:closed} compares the three methods with the closed forms. The PDE and the tree reprice the straight
+bond to machine precision (the tree by construction of $\alpha_k$). The European call is recovered to $10^{-4}$ by the
+PDE and to $1.4\times10^{-3}$ by the tree, and Monte Carlo is within 1.7 standard errors in every case.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+& \textbf{Case} & \textbf{Closed form} & \textbf{PDE} & \textbf{Tree} & \textbf{LSM} & \textbf{LSM s.e.} \\
+\midrule
+Straight & default-free & 111.5565 & $3\times10^{-7}$ & $-1\times10^{-12}$ & 0.0059 & 0.0078 \\
+         & credit, $R = 0$ & 92.9239 & $3\times10^{-7}$ & $-1\times10^{-12}$ & 0.0047 & 0.0062 \\
+         & credit, $R = 40\%$ & 99.9402 & $2\times10^{-7}$ & $-2\times10^{-7}$ & 0.0110 & 0.0065 \\
+European & default-free & 104.8151 & $-2\times10^{-5}$ & $-0.0014$ & $-0.0066$ & 0.0174 \\
+callable & credit, $R = 0$ & 92.6967 & $-9\times10^{-5}$ & $-0.0009$ & 0.0090 & 0.0077 \\
+\bottomrule
+\end{tabular}
+\caption{Method minus closed form (dirty prices, per 100). Jamshidian's formula only holds with zero recovery.}
+\label{tab:closed}
+\end{table}
+
+\subsection{Agreement of the three methods}
+Table~\ref{tab:methods} prices the four bonds with the three methods. The tree is within 0.16 cent of the PDE;
+Monte Carlo is 1.0 to 1.5 standard errors below it (the four estimates use the same seed, hence share their noise).
+For the American bond, Monte Carlo prices monthly call dates, slightly above the continuous American
+(Table~\ref{tab:bermam}). Times are 0.3 to 0.55 second for the tree and the PDE; Monte Carlo takes
+6.3 seconds for the American (about 90 call dates, each with a closed-form regressor on every path).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+\textbf{Bond} & \textbf{PDE} & \textbf{Tree} & \textbf{LSM} & \textbf{s.e.} & \textbf{$\frac{\text{LSM}-\text{PDE}}{\text{s.e.}}$} & \textbf{PDE (s)} & \textbf{LSM (s)} \\
+\midrule
+Straight & 99.9402 & 99.9402 & 99.9512 & 0.0065 & $+1.68$ & 0.46 & 0.41 \\
+European & 98.7382 & 98.7388 & 98.7149 & 0.0158 & $-1.47$ & 0.46 & 0.49 \\
+Bermudan & 98.2050 & 98.2034 & 98.1854 & 0.0135 & $-1.46$ & 0.46 & 0.82 \\
+American & 98.0890 & 98.0877 & 98.0758 & 0.0132 & $-0.99$ & 0.54 & 6.29 \\
+\bottomrule
+\end{tabular}
+\caption{Dirty prices per 100 by method (credit, $R = 40\%$). LSM: 50{,}000 out-of-sample paths, monthly calls for the American.}
+\label{tab:methods}
+\end{table}
+
+\subsection{Longstaff--Schwartz bias}
+Over five independent seeds, the Bermudan price is 98.1985 out-of-sample and 98.2121 in-sample, against 98.2050 for
+the PDE: $-0.0065$ and $+0.0071$, both within the standard error of a five-seed mean (about 0.006). The regression
+policy is therefore close to optimal; the out-of-sample price is the one to report, since it values a policy the
+issuer could follow.
+
+\subsection{From Bermudan to American}
+A bond callable every $1/m$ year from the first call date must converge to the American bond as $m\to\infty$, and be
+worth less with more call dates. Table~\ref{tab:bermam} confirms both, with the tree and the PDE agreeing at each
+frequency.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Call dates} & annual & semi-annual & quarterly & monthly & weekly & American \\
+\midrule
+PDE  & 98.2050 & 98.1491 & 98.1196 & 98.0988 & 98.0918 & 98.0890 \\
+Tree & 98.2034 & 98.1480 & 98.1178 & 98.0970 & 98.0892 & 98.0877 \\
+\bottomrule
+\end{tabular}
+\caption{Bermudan bonds with denser call dates converge to the American bond (dirty, per 100).}
+\label{tab:bermam}
+\end{table}
+
+\subsection{Grid convergence}
+Figure~\ref{fig:convergence} measures the error against a fine PDE (3{,}201 nodes, 800 steps per year), the space
+grid of the PDE being refined with the time grid. Crank--Nicolson with Rannacher steps converges fast for the European
+and Bermudan bonds (below $10^{-4}$ from 50 steps per year). The American converges at first order in time, as any
+scheme where the $\min$ is applied at every node. The tree error is not monotone (the position of the nodes relative
+to the strike changes with the grid), but stays below 0.2 cent from 100 steps per year. The default setting, 100
+steps per year, gives errors below 0.12 cent per 100 for the three styles.
+
+\begin{figure}[h]
+\centering
+\figfile{convergence.png}{\textwidth}
+\caption{Absolute error against a fine PDE as a function of the time steps per year.}
+\label{fig:convergence}
+\end{figure}
+
+% ==================================================================
+\section{Prices, Spreads and Risk}\label{sec:results}
+% ==================================================================
+
+\subsection{Prices}
+Table~\ref{tab:prices} gives the model prices. The more call dates, the more valuable the issuer's option: it is worth
+1.20 per 100 for the European call, 1.74 for the Bermudan and 1.85 for the American. The first call date carries most
+of the value; the Bermudan adds the right to wait, and the American only adds the dates between coupons.
+
+Default lowers the option value by a factor of four to six: without default, the same bonds are worth 104.82, 104.29 and
+104.16 against 111.56 for the straight bond, an option of 6.74 to 7.40. With credit risk, the bond trades below par,
+further from the call price, and the call is out of the money; moreover the issuer can only call if it survives.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+& \textbf{Straight} & \textbf{European} & \textbf{Bermudan} & \textbf{American} \\
+\midrule
+Dirty price & 99.9402 & 98.7382 & 98.2050 & 98.0890 \\
+Clean price & 98.4827 & 97.2807 & 96.7475 & 96.6314 \\
+Issuer option & -- & 1.2020 & 1.7352 & 1.8513 \\
+Default-free dirty price & 111.5565 & 104.8151 & 104.2878 & 104.1586 \\
+Default-free issuer option & -- & 6.7415 & 7.2687 & 7.3979 \\
+\bottomrule
+\end{tabular}
+\caption{Model prices (PDE, per 100; accrued interest 1.4575).}
+\label{tab:prices}
+\end{table}
+
+\subsection{Spreads and yields from a quoted price}
+In practice the clean price is observed and the spreads are solved for. Table~\ref{tab:market} uses an illustrative
+quote of 98.50. The Z-spread, 139bp, ignores the call; the OAS strips it out and is lower for every style, the more so
+with more call dates: 106bp (European), 93bp (Bermudan) and 90bp (American). Part of the extra yield of a callable bond
+pays for the option the holder has sold, not for credit.
+
+Below par, the worst case for the holder is the bond running to maturity, and the yield to worst equals the yield to
+maturity (4.94\%). Above par it is an early call: at a clean price of 104 the yield to maturity is 4.23\% but the yield
+to the first call is 3.17\% (Figure~\ref{fig:yields}).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+& \textbf{European} & \textbf{Bermudan} & \textbf{American} \\
+\midrule
+Z-spread (bp) & 138.7 & 138.7 & 138.7 \\
+OAS (bp) & 106.3 & 92.8 & 89.9 \\
+Yield to maturity (\%) & 4.941 & 4.941 & 4.941 \\
+Yield to worst (\%) & 4.941 & 4.941 & 4.941 \\
+\bottomrule
+\end{tabular}
+\caption{Spreads and yields at a quoted clean price of 98.50 (dirty 99.96).}
+\label{tab:market}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{yields.png}{0.8\textwidth}
+\caption{Yield to each redemption date of the Bermudan bond at three clean prices; circled: the yield to worst.}
+\label{fig:yields}
+\end{figure}
+
+\subsection{Interest rate, volatility and credit risk}
+Table~\ref{tab:risk} gives the risk measures. The callable bonds have a shorter duration than the straight bond (5.9
+to 6.0 against 7.6) and a \emph{negative} convexity: when rates fall, the call gets closer, the expected life
+shortens and the price is capped near the call price (Figure~\ref{fig:profile}). The vega is negative, since the
+holder is short the option, and grows with the number of call dates. The CS01 is smaller than that of the straight
+bond: a wider spread pushes the call further out of the money, which offsets part of the loss.
+
+The three methods agree on duration, DV01, vega and CS01 to the second or third digit (e.g. Bermudan duration 5.927,
+5.926 and 5.920 for the PDE, the tree and Monte Carlo, vega $-0.0271$, $-0.0272$, $-0.0270$). The effective
+convexity, a second difference, depends on the exercise discretisation: the tree ($-137$ for the European) and Monte
+Carlo ($-110$ for the Bermudan, policy re-estimated in each scenario) are noisy; the PDE values are the ones to use.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+& \textbf{Straight} & \textbf{European} & \textbf{Bermudan} & \textbf{American} \\
+\midrule
+Effective duration & 7.560 & 6.044 & 5.927 & 5.894 \\
+Effective convexity & 66.5 & $-92.0$ & $-69.9$ & $-70.6$ \\
+DV01 (per 100) & 0.0756 & 0.0597 & 0.0582 & 0.0578 \\
+Vega (per bp of $\sigma$) & 0.0000 & $-0.0199$ & $-0.0271$ & $-0.0285$ \\
+CS01 (per bp of hazard) & $-0.0451$ & $-0.0352$ & $-0.0342$ & $-0.0339$ \\
+\bottomrule
+\end{tabular}
+\caption{Effective risk measures (PDE, $\pm 10$bp shifts, Hull--White refitted).}
+\label{tab:risk}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{price_profile.png}{\textwidth}
+\caption{Left: $V(0,x)$ as a function of the initial short rate, from one PDE solve (today: dotted). Right: full
+repricing under parallel shifts of the curve. The callable bonds are capped near the call price when rates fall.}
+\label{fig:profile}
+\end{figure}
+
+The key-rate durations (Figure~\ref{fig:krd}) add up to the effective duration (7.5595, 6.0429, 5.9205 and 5.8996
+against 7.5595, 6.0429, 5.9200 and 5.8954 for 1bp parallel shifts). The straight bond's risk sits on the 9- and
+10-year pillars, near its maturity. The call moves part of it to the 2- to 4-year pillars around the first call date:
+a callable bond behaves partly like a bond maturing at the call. The hedge of a callable bond therefore involves
+short-dated instruments that a yield-to-maturity duration ignores.
+
+\begin{figure}[h]
+\centering
+\figfile{key_rate_durations.png}{0.85\textwidth}
+\caption{Key-rate durations (triangular shifts, PDE).}
+\label{fig:krd}
+\end{figure}
+
+% ==================================================================
+\section{Exercise Policy}\label{sec:exercise}
+% ==================================================================
+
+\subsection{Exercise boundary}
+The issuer calls when the short rate is below the critical rate $r^*(t)$ (Figure~\ref{fig:boundary}). On the first
+call date, $r^*$ is 2.20\% for the European bond, 1.54\% for the Bermudan and 1.03\% for the American. With more
+future call dates the issuer gains by waiting, and only calls for a deeper fall in rates; the European issuer, with
+a single chance, calls at the highest threshold. The boundary rises towards maturity (1.28\% after 6.2 years, 2.44\%
+about a month before maturity for the American; 2.55\% on the last Bermudan date): with fewer coupons left to save, a
+smaller rate drop is enough. All thresholds are well below the forward curve (3.2\% to 4.1\%): the call is out of
+the money at today's rates, because the bond, after its credit spread, is worth less than par. The tree gives the
+same Bermudan thresholds within one node.
+
+\begin{figure}[h]
+\centering
+\figfile{boundary.png}{0.85\textwidth}
+\caption{Critical short rate $r^*(t)$ below which the issuer calls (PDE; crosses: tree).}
+\label{fig:boundary}
+\end{figure}
+
+\subsection{Call probabilities and expected life}
+The Monte Carlo paths give the probability of a call on each date given survival (Figure~\ref{fig:callprob},
+Table~\ref{tab:life}). The European bond is called with probability 28\%. The Bermudan bond is called with
+probability 43\% in total, 16\% on the first call date and less than 7\% on each later one. The American issuer calls
+more often in total (46\%) but spreads the calls over the call period, waiting for lower rates, so the expected life
+(7.60 years) is not shorter than for the Bermudan (7.59 years).
+
+\begin{figure}[h]
+\centering
+\figfile{call_probability.png}{\textwidth}
+\caption{Left: probability of a call on each date, given survival (European and Bermudan). Right: share of the bonds
+still outstanding, all styles (American: monthly call dates).}
+\label{fig:callprob}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+& \textbf{European} & \textbf{Bermudan} & \textbf{American (monthly)} \\
+\midrule
+Probability of a call (\%) & 27.6 & 42.5 & 45.6 \\
+Expected life (years) & 7.77 & 7.59 & 7.60 \\
+\bottomrule
+\end{tabular}
+\caption{Call statistics given survival (Monte Carlo, 50{,}000 paths); maturity 9.70 years.}
+\label{tab:life}
+\end{table}
+
+% ==================================================================
+\section{Model Risk and Term Sheet Variants}\label{sec:modelrisk}
+% ==================================================================
+
+\subsection{Mean reversion}
+The co-terminal European swaptions fix one combination of $(a, \sigma)$ for each expiry, not both parameters
+independently. Table~\ref{tab:meanrev} fixes $a$, recalibrates $\sigma$ to the same five swaptions and reprices the
+bonds. The fit stays acceptable (RMSE below 1bp of normal volatility up to $a = 0.15$). The European bond, an option
+close to the calibration set, moves by at most 1.4 cent. The Bermudan and American bonds move by up to 0.32 and 0.44
+per 100: the mean reversion sets the correlation between rates at different call dates, hence the value of choosing
+the call date, which European swaptions do not see. A higher $a$ decorrelates the call dates, makes the right to
+choose worth more and the bond worth less. This spread is model risk at identical calibration; reducing it requires
+Bermudan swaption quotes or a second factor.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+$a$ & $\sigma$ (bp) & \textbf{RMSE (bp)} & \textbf{European} & \textbf{Bermudan} & \textbf{American} \\
+\midrule
+0.005 & 77.9 & 0.93 & $+0.014$ & $+0.142$ & $+0.182$ \\
+0.020 & 83.5 & 0.88 & $+0.011$ & $+0.117$ & $+0.151$ \\
+0.050 & 95.6 & 0.80 & $+0.005$ & $+0.065$ & $+0.085$ \\
+\textbf{0.0863} & \textbf{111.9} & \textbf{0.76} & \textbf{98.7382} & \textbf{98.2050} & \textbf{98.0890} \\
+0.150 & 144.8 & 0.91 & $-0.006$ & $-0.121$ & $-0.162$ \\
+0.250 & 208.1 & 1.58 & $-0.007$ & $-0.324$ & $-0.445$ \\
+\bottomrule
+\end{tabular}
+\caption{Prices with $\sigma$ recalibrated for each mean reversion, as differences to the calibrated model (bold row).}
+\label{tab:meanrev}
+\end{table}
+
+\subsection{Volatility and credit}
+The issuer's option increases with the volatility (Figure~\ref{fig:volcredit}): from 0.01 to 0.03 per 100 at
+$\sigma = 30$bp to 3.07 (European), 4.21 (Bermudan) and 4.45 (American) at 200bp. It decreases with the credit
+spread: a parallel shift of the hazard rates of $-100$bp raises it to 2.54 to 3.27, $+300$bp lowers it to 0.05 to
+0.22, as the bond moves away from the call price. With a deterministic intensity, the model ignores the other reason
+to call, a tightening of the issuer's own spread (Section~\ref{sec:limitations}).
+
+\begin{figure}[h]
+\centering
+\figfile{vol_credit.png}{\textwidth}
+\caption{Issuer option value as a function of the Hull--White volatility (left) and of a parallel shift of the hazard
+rates (right).}
+\label{fig:volcredit}
+\end{figure}
+
+\subsection{Term sheet variants}
+Table~\ref{tab:variants} prices three common variants of the bond. A step-down call price (102 from 2029, 101 from
+2031, par from 2033) makes early calls costly and lowers the option by 0.42 for the European bond, whose only call is
+at 102, and by about 0.40 for the other two. Semi-annual coupons (same annual rate) raise the bond, since coupons are
+received earlier, and give the Bermudan issuer twice as many call dates. Quarterly calls on the annual-coupon bond
+(call price plus accrued interest between coupons) lie between the annual Bermudan and the American. The tree agrees
+with the PDE within 0.2 cent on every variant.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+\textbf{Variant} & \textbf{Style} & \textbf{Dirty} & \textbf{Clean} & \textbf{Issuer option} & \textbf{Tree$-$PDE} \\
+\midrule
+Par call (base) & European & 98.7382 & 97.2807 & 1.2020 & $+0.0006$ \\
+                & Bermudan & 98.2050 & 96.7475 & 1.7352 & $-0.0016$ \\
+                & American & 98.0890 & 96.6314 & 1.8513 & $-0.0012$ \\
+Step-down 102/101/100 & European & 99.1624 & 97.7048 & 0.7779 & $-0.0014$ \\
+                & Bermudan & 98.5970 & 97.1394 & 1.3433 & $-0.0012$ \\
+                & American & 98.5088 & 97.0513 & 1.4314 & $-0.0012$ \\
+Semi-annual coupons & European & 99.1783 & 97.7247 & 1.2944 & $-0.0020$ \\
+                & Bermudan & 98.5841 & 97.1306 & 1.8886 & $-0.0013$ \\
+                & American & 98.5235 & 97.0699 & 1.9493 & $-0.0018$ \\
+Quarterly calls & Bermudan & 98.1196 & 96.6620 & 1.8207 & $-0.0017$ \\
+\bottomrule
+\end{tabular}
+\caption{Term sheet variants (PDE, per 100).}
+\label{tab:variants}
+\end{table}
+
+% ==================================================================
+\section{Implementation}\label{sec:implementation}
+% ==================================================================
+\begin{itemize}
+\item \code{Products/callable\_bond/callable\_bond\_pricer.py}:\\ \code{CreditCurve} (CDS bootstrap),
+\code{CallableBond} and \code{DatedCallableBond} (term sheet), \code{CallableBondPDE}, \code{CallableBondTree},
+\code{CallableBondLSM} (one interface: \code{price(bond, callable)}, \code{with\_model}, \code{with\_credit}), the
+closed forms, \code{option\_adjusted\_spread}, \code{effective\_risk}, \code{yield\_table},
+\code{key\_rate\_durations} and \code{pricing\_report};
+\item \code{Fixed\_Income\_Models}: \code{YieldCurve}, \code{HullWhite} (zero-coupon bonds and options, exact
+simulation, calibration), \code{RatePricer};
+\item \code{Products/callable\_bond/callable\_bond\_pricer.ipynb}: the notebook of this report (about 4 minutes);
+\code{make\_figures.py} extracts its figures.
+\end{itemize}
+
+\begin{lstlisting}
+from callable_bond_pricer import DatedCallableBond, CallableBondPDE, CallableBondTree, CallableBondLSM, pricing_report
+
+bond = DatedCallableBond("2026-10-05", "2036-06-15", 0.0475, first_call_date="2029-06-15",
+                         issue_date="2024-06-15", exercise="bermudan")
+pde = CallableBondPDE(hw, credit, recovery=0.40)          # hw : calibrated HullWhite, credit : CreditCurve
+print(pde.price(bond), CallableBondTree(hw, credit, 0.40).price(bond), CallableBondLSM(hw, credit, 0.40).price(bond))
+print(pricing_report(pde, bond.with_exercise("american"), market_price=98.50))   # OAS, YTW, duration, vega, CS01
+\end{lstlisting}
+
+% ==================================================================
+\section{Limitations and Next Steps}\label{sec:limitations}
+% ==================================================================
+\begin{itemize}
+\item \emph{One factor.} Rates of all maturities are perfectly correlated; the Bermudan and American prices depend on
+the mean reversion at identical European calibration (Table~\ref{tab:meanrev}). A two-factor Gaussian model (G2++)
+calibrated to Bermudan swaptions would reduce this model risk; the Monte Carlo pricer only needs the model's
+simulation and zero-coupon bond prices to extend to it.
+\item \emph{Credit.} The intensity is deterministic and independent of rates, so the issuer never calls because its
+own spread tightens, and the option is undervalued for issuers with volatile spreads. A stochastic intensity
+correlated with rates (CIR or a second Gaussian factor) would capture it.
+\item \emph{Market data.} Swaption volatilities and CDS spreads are illustrative; the AAA government curve is used as
+risk-free curve, whereas an €STR curve is the standard discounting curve for a dealer.
+\item \emph{Conventions.} No business-day adjustment, settlement lag or call notice period; the American call is
+monthly in Monte Carlo. A notice period changes the payoff to $\big(K + \AI\big)P(t_n, t_c; x)$ at the notice date
+and is a direct extension of the three methods.
+\item \emph{Product scope.} Puttable bonds (holder's option, $\max$ instead of $\min$), make-whole calls and
+amortising bonds are not covered.
+\end{itemize}
+
+% ==================================================================
+\section{Conclusion}
+% ==================================================================
+A single pricing equation, with the issuer's $\min$ applied on the call set, prices European, Bermudan and American
+callable bonds under Hull--White with default risk. Three independent methods, a Crank--Nicolson PDE, a trinomial tree
+with unequal steps and an out-of-sample Longstaff--Schwartz Monte Carlo, agree within a fraction of a cent and
+reprice the closed forms. On an illustrative BBB bond, the issuer's option is worth 1.2 to 1.9 per 100, four to six
+times less than for the same default-free bond; it lowers the OAS by 32 to 49bp below the Z-spread, turns the convexity
+negative and moves the rate risk towards the first call date. The European price is pinned by the swaption
+calibration, but the value of choosing the call date, which separates the Bermudan and American bonds from it,
+depends on the mean reversion: a model risk of up to 0.44 per 100 that European swaptions alone cannot remove.
+
+% ==================================================================
+\appendix
+\section{Notation}
+% ==================================================================
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$r_t = x_t + \alpha(t)$ & Short rate, Ornstein--Uhlenbeck state, deterministic shift \\
+$a$, $\sigma$ & Mean reversion, normal volatility of the short rate \\
+$P(t,T;x)$, $B(t,T)$ & Zero-coupon bond price given the state, its sensitivity to $x$ \\
+$\lambda(t)$, $Q(0,t)$, $R$ & Default intensity, survival probability, recovery rate \\
+$N$, $c_i$, $T_i$, $f$ & Notional, coupons, payment dates, coupon frequency \\
+$K(t)$, $\AI(t)$, $\mathcal{T}$, $T_c$ & Clean call price, accrued interest, call set, first call date \\
+$V(t,x)$ & Value of the callable bond before default \\
+$x^*(t)$, $r^*(t)$ & Critical state and short rate below which the issuer calls \\
+$D(0,t)$ & Bank-account discount factor $e^{-\int_0^t r}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ==================================================================
+\begin{thebibliography}{99}
+\bibitem{benguedda2026yield} E. Benguedda, \emph{Yield Curve Construction: Interpolation, Bootstrapping and Curve
+Risk}, 2026.
+\bibitem{andersen2010} L. Andersen and V. Piterbarg, \emph{Interest Rate Modeling}, Atlantic Financial Press, 2010.
+\bibitem{brigo2006} D. Brigo and F. Mercurio, \emph{Interest Rate Models -- Theory and Practice}, 2nd edition,
+Springer, 2006.
+\bibitem{duffie1999} D. Duffie and K. Singleton, Modeling term structures of defaultable bonds, \emph{Review of
+Financial Studies}, 12(4):687--720, 1999.
+\bibitem{ho1992} T. S. Y. Ho, Key rate durations: measures of interest rate risks, \emph{Journal of Fixed Income},
+2(2):29--44, 1992.
+\bibitem{hull1990} J. Hull and A. White, Pricing interest-rate-derivative securities, \emph{Review of Financial
+Studies}, 3(4):573--592, 1990.
+\bibitem{hull1994} J. Hull and A. White, Numerical procedures for implementing term structure models I: single-factor
+models, \emph{Journal of Derivatives}, 2(1):7--16, 1994.
+\bibitem{jamshidian1989} F. Jamshidian, An exact bond option formula, \emph{Journal of Finance}, 44(1):205--209, 1989.
+\bibitem{kalotay1993} A. Kalotay, G. Williams and F. Fabozzi, A model for valuing bonds and embedded options,
+\emph{Financial Analysts Journal}, 49(3):35--46, 1993.
+\bibitem{lando1998} D. Lando, On Cox processes and credit risky securities, \emph{Review of Derivatives Research},
+2:99--120, 1998.
+\bibitem{longstaff2001} F. Longstaff and E. Schwartz, Valuing American options by simulation: a simple least-squares
+approach, \emph{Review of Financial Studies}, 14(1):113--147, 2001.
+\bibitem{rannacher1984} R. Rannacher, Finite element solution of diffusion problems with irregular data,
+\emph{Numerische Mathematik}, 43:309--327, 1984.
+\end{thebibliography}
+
+\end{document}
