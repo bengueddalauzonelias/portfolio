@@ -2,7 +2,10 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from scipy.optimize import brentq
-from forward_curve import ForwardCurve
+try:  # imported as the Equity_Models package
+    from .forward_curve import ForwardCurve
+except ImportError:  # imported flat, from inside Equity_Models
+    from forward_curve import ForwardCurve
 
 class BlackScholes:
     """

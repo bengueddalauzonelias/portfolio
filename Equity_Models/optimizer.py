@@ -3,7 +3,10 @@ import numpy as np
 import pandas as pd
 import scipy.optimize as opt
 from scipy.stats import qmc
-from error import CalibrationLoss
+try:  # imported as the Equity_Models package
+    from .error import CalibrationLoss
+except ImportError:  # imported flat, from inside Equity_Models
+    from error import CalibrationLoss
 
 
 # This script is used to search the global minimum of a model calibration.

@@ -1,7 +1,11 @@
 import numpy as np
 import pandas as pd
-from Black_Scholes import BlackScholes
-from ImpliedVolatilitySurface import ImpliedVolatilitySurface
+try:  # imported as the Equity_Models package
+    from .Black_Scholes import BlackScholes
+    from .ImpliedVolatilitySurface import ImpliedVolatilitySurface
+except ImportError:  # imported flat, from inside Equity_Models
+    from Black_Scholes import BlackScholes
+    from ImpliedVolatilitySurface import ImpliedVolatilitySurface
 
 
 class CalibrationLoss:

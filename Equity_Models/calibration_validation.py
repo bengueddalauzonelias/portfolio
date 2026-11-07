@@ -8,8 +8,12 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from Heston import HestonModel, TimeDependentHestonModel
-from optimizer import Calibrator
+try:  # imported as the Equity_Models package
+    from .Heston import HestonModel, TimeDependentHestonModel
+    from .optimizer import Calibrator
+except ImportError:  # imported flat, from inside Equity_Models
+    from Heston import HestonModel, TimeDependentHestonModel
+    from optimizer import Calibrator
 
 FULL = ("theta", "xi", "rho")
 # Name -> number of free parameters, in the order of the calibration procedure

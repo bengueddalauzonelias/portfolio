@@ -18,12 +18,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import PchipInterpolator
 
-from forward_curve import ForwardCurve
-from Black_Scholes import BlackScholes
-from ImpliedVolatilitySurface import ImpliedVolatilitySurface
-from Heston import HestonModel
-from error import CalibrationLoss
-from optimizer import Calibrator
+from Equity_Models.forward_curve import ForwardCurve
+from Equity_Models.Black_Scholes import BlackScholes
+from Equity_Models.ImpliedVolatilitySurface import ImpliedVolatilitySurface
+from Equity_Models.Heston import HestonModel
+from Equity_Models.error import CalibrationLoss
+from Equity_Models.optimizer import Calibrator
 
 DATA = os.path.join(HERE, "..", "Data")
 CAC40_SPOT = 8042.19

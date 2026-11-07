@@ -4,8 +4,12 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy import optimize
 from scipy.interpolate import interp1d
-from Black_Scholes import BlackScholes
-from forward_curve import ForwardCurve
+try:  # imported as the Equity_Models package
+    from .Black_Scholes import BlackScholes
+    from .forward_curve import ForwardCurve
+except ImportError:  # imported flat, from inside Equity_Models
+    from Black_Scholes import BlackScholes
+    from forward_curve import ForwardCurve
 
 
 class ImpliedVolatilitySurface:
