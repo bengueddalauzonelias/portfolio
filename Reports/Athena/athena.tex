@@ -14,6 +14,8 @@
 \usepackage{listings}
 \usepackage{caption}
 \usepackage{pgfplots}
+\usepackage[section]{placeins}
+\usepackage{booktabs, multirow}
 \usepgfplotslibrary{groupplots}
 \pgfplotsset{compat=1.17}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric}
@@ -45,7 +47,7 @@
 \title{Athena Autocallable Notes on the CAC40 under a Calibrated Heston Model:\\
 Fair Coupons, Scenarios and Greeks}
 \author{Elias Benguedda}
-\date{October 2026}
+\date{November 2026}
 
 \begin{document}
 \emergencystretch=3em
@@ -482,28 +484,307 @@ level, the notional alone if it is at or above the protection barrier
 $B_p = 60\%$, and the notional reduced by the full decline of the index
 otherwise.
 
-\subsubsection{Model}
+
 
 \subsubsection{Pricing}
 
+For the purpose of the pricing of this product, we will use the script \texttt{athena.py}\footnote{\url{https://github.com/bengueddalauzonelias/portfolio/tree/main/Products/Athena}} to build the product and \texttt{monte\_carlo.py}\footnote{\url{https://github.com/bengueddalauzonelias/portfolio/tree/main/Equity_Models}} to simulate the different paths.
+
+In this first basic case, we have the following result:
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llr}
+    \toprule
+     & & \textbf{Base case} \\
+    \midrule
+    \multirow{19}{*}{Contract}
+      & Maturity (years)                    & 4 \\
+      & Number of observations              & 16 \\
+      & Observation frequency (years)       & 0.25 \\
+      & Coupon (\% p.a.)                    & 6 \\
+      & Coupon type                         & Snowball \\
+      & First autocall barrier (\%)         & 100 \\
+      & Last autocall barrier (\%)          & 100 \\
+      & Step-down per observation (\%)      & 0 \\
+      & First call date (years)             & 0.25 \\
+      & Protection barrier (\%)             & 60 \\
+      & Protection type                     & European \\
+      & Redemption if knocked-in            & Standard \\
+      & Capital guaranteed (\%)             & 0 \\
+      & Buffer (\%)                         & 0 \\
+      & Range accrual (\%)                  & -- \\
+      & Duo barrier (\%)                    & -- \\
+      & Duo coupon ratio                    & -- \\
+      & Look-back                           & -- \\
+      & Nominal                             & 100 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal)                  & 97.80 \\
+      & 95\% confidence interval ($\pm$)    & 0.11 \\
+      & Fair coupon (\% p.a.)               & 10.54 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%)  & 13.29 \\
+      & Probability of a capital loss (\%)  & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 \\
+      & Expected life (years)               & 1.03 \\
+      & Expected number of coupons          & 0.87 \\
+      & Expected coupon paid (\% nominal)   & 3.01 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Contract features, pricing results and scenario statistics of the
+           base-case Athena.}
+  \label{tab:athena-base-case-results}
+\end{table}
+
+
+
+We also plotted the distribution of call probability over the different paths.
+
+
+\begin{figure}[h]
+\centering
+\figfile{proba_call.png}{0.9\textwidth}
+\caption{Distribution of the call probability}
+\label{fig:proba_call}
+\end{figure}
+
+
+
+As we can see, the probability for the product to be called during the first observation period is around 55\% and the cumulative probability of call is around 86\%. 
+
+We then present the distribution of the different paths:
+
+\begin{figure}[h]
+\centering
+\figfile{simulated_paths.png}{0.9\textwidth}
+\caption{Distribution of the different paths}
+\label{fig:simulated_paths}
+\end{figure}
+
+The expected life of this product is pretty short and because the investor is short a PDI, when the product losses money it losses a large amount of money.
+
+
+
+
+
+
 \subsubsection{Sensitivities}
 
+We are now interested in how the different parameters impact the price of a basic Athena product. We notice that the price after the emission of the note and the fair-coupon $c^*$ move at the opposite one to another.
+\clearpage
+\subsubsection*{Protection barrier}
+
+We plotted the different parameters against a move of the protection barrier:
+
+\begin{figure}[h]
+\centering
+\figfile{protection_move.png}{0.9\textwidth}
+\caption{Move of the protection barrier}
+\label{fig:protection_move}
+\end{figure}
+
+As we can see an augmentation of the protection barrier increases the value of $c^*$. It is easy to understand, in fact an increase of the protection barrier exposes more the investor to do not receive the coupon at the redemption date, the investor then takes more risk and must be remunerated for this risk. As well, the probability of capital loss and expected loss increasein the same direction as the barrier option.
+
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{rccc}
+    \toprule
+    \makecell{Protection\\barrier (\%)} &
+    \makecell{Fair coupon\\(\% p.a.)} &
+    \makecell{Probability of a\\capital loss (\%)} &
+    \makecell{Expected loss\\(\% nominal)} \\
+    \midrule
+     10 &  4.99 &  0.10 & 0.09 \\
+     20 &  5.55 &  0.48 & 0.41 \\
+     30 &  6.38 &  1.09 & 0.87 \\
+     40 &  7.58 &  2.07 & 1.50 \\
+     50 &  9.00 &  3.43 & 2.25 \\
+     55 &  9.81 &  4.32 & 2.67 \\
+     \textbf{60} & \textbf{10.54} & \textbf{5.22} & \textbf{3.05} \\
+     65 & 11.24 &  6.19 & 3.42 \\
+     70 & 11.94 &  7.32 & 3.78 \\
+     75 & 12.48 &  8.34 & 4.07 \\
+     80 & 13.00 &  9.57 & 4.34 \\
+     90 & 13.64 & 11.81 & 4.68 \\
+    100 & 13.80 & 13.29 & 4.77 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Fair coupon and loss statistics as a function of the protection
+           barrier, all other parameters being those of the base case (in
+           bold). The expected life of the product, equal to 1.03 years, does
+           not depend on the protection barrier.}
+  \label{tab:athena-sensi-protection}
+\end{table}
+
+
+
+
+\clearpage
+\subsubsection*{Autocall barrier}
+
+
+We also plotted the reaction of the different parameters for a move of the autocall barrier.
+
+\begin{figure}[h]
+\centering
+\figfile{autocall_move.png}{0.9\textwidth}
+\caption{Move of the autocall barrier}
+\label{fig:autocall_move}
+\end{figure}
+
+
+
+
+\clearpage
+\subsubsection{Hedging}
+
+
+If we think from the desk's point of view there are long a PDI, their main sensibility to manage is the delta.
+
+For real hedging of this kind of product, have a look to the paper pricing of barrier options \footnote{\url{https://portfolio-eliasbenguedda.fr/projects/barriere_option.html}}
+
+
+\clearpage
 \subsection{Features of Athena products}
 
+We have seen the basic Athena product, its construction, its sensitivities and its hedging. Now, the investor could want to have better guarantees or a higher coupon. For this purpose, we can add some interesting features to the product that we will expose in the following parts of this paper.
+\clearpage
 \subsubsection{Exercise frequency}
 
+
+First thing first, the exercise frequency can be changed. Instead of looking at the level of the underlying stock, one could want to have a daily exercise frequency. This change of the frequency would have as an impact to increase the value of $c^*$, to remunerate the investor bigger risk taken.
+
+If we change in our product the observation frequency from quarterly to daily, we have the following results:
+
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Daily observation} \\
+    \midrule
+    \multirow{3}{*}{Contract}
+      & Number of observations              & 16    & 1008 \\
+      & Observation frequency (years)       & 0.25  & 1/252 \\
+      & First call date (years)             & 0.25  & 1/252 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal)                  & 97.80 & 99.65 \\
+      & 95\% confidence interval ($\pm$)    & 0.11  & 0.05 \\
+      & Fair coupon (\% p.a.)               & 10.54 & 11.74 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%)  & 13.29 & 1.80 \\
+      & Probability of a capital loss (\%)  & 5.22  & 0.78 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 0.46 \\
+      & Expected life (years)               & 1.03  & 0.13 \\
+      & Expected number of coupons          & 0.87  & 0.98 \\
+      & Expected coupon paid (\% nominal)   & 3.01  & 0.38 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Comparison between quarterly and daily autocall observation, all
+           other parameters being those of the base case.}
+  \label{tab:athena-daily-observation}
+\end{table}
+
+We observe that the fair coupon is now 11.74\%. 
+
+\clearpage
 \subsubsection{Step-down barrier}
+
+The step down feature is really easy to understand. In fact, periodically, the auto call barrier is moving. It can be in both side. Generally the barrier is decreasing over time. We took the example of a 1\% decreasing barrier at each observation date. That means at the end of the life of the product (if we don't consider the maturity as a redemption date), the barrier will be at 85\% of the initial spot price.
+We have the following result:
+
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Step-down 1\%} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Last autocall barrier (\%)          & 100   & 85 \\
+      & Step-down per observation (\%)      & 0     & 1 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal)                  & 97.80 & 98.81 \\
+      & 95\% confidence interval ($\pm$)    & 0.11  & 0.10 \\
+      & Fair coupon (\% p.a.)               & 10.54 & 8.24 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%)  & 13.29 & 8.12 \\
+      & Probability of a capital loss (\%)  & 5.22  & 4.44 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 2.62 \\
+      & Expected life (years)               & 1.03  & 0.87 \\
+      & Expected number of coupons          & 0.87  & 0.92 \\
+      & Expected coupon paid (\% nominal)   & 3.01  & 3.29 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Effect of a step-down autocall barrier, decreasing by 1\% per
+           quarterly observation from 100\% to 85\%, all other parameters
+           being those of the base case.}
+  \label{tab:athena-step-down}
+\end{table}
+
+
+\clearpage
 
 \subsubsection{Airbag}
 
+The airbag effect is also easy to understand
+
+
+
+\clearpage
+
 \subsubsection{Buffer}
 
+
+
+
+
+
+
+\clearpage
 \subsubsection{Guaranteed capital}
 
+
+
+
+
+
+
+\clearpage
 \subsubsection{Coupon range accrual}
 
+
+
+
+
+
+
+
+
+
+\clearpage
 \subsubsection{Duo mechanism}
 
+
+
+
+
+
+
+
+
+\clearpage
 \subsubsection{Look back}
 
 
