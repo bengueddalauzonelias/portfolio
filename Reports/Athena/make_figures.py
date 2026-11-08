@@ -1,7 +1,6 @@
 # This script extracts the figures of the report athena.tex from the executed notebook
-# Products/Athena/athena_pricer.ipynb into the figures/ folder.
-# The payoffs, the call probabilities and the fair coupon curves are drawn in LaTeX
-# (pgfplots / TikZ) from the numbers of the report : only the simulated scenarios and the Greeks are images.
+# Products/Athena/athena_synthetic_pricing.ipynb into the figures/ folder.
+# The redemption profiles of Section 2 are drawn in LaTeX (pgfplots / TikZ) ; every other figure is an image.
 # Re-run the notebook, then this script, to update the figures.
 import os
 import json
@@ -10,24 +9,37 @@ import base64
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRODUCTS = os.path.join(HERE, "..", "..", "Products")
 FIGURES = os.path.join(HERE, "figures")
+NOTEBOOK = "Athena/athena_synthetic_pricing.ipynb"
 
-# (notebook, fragment of the cell source, index of the image in the cell outputs, file name)
+# (fragment of the cell source, index of the image in the cell outputs, file name)
 TARGETS = [
-    ("Athena/athena_pricer.ipynb", "plot_scenarios(pricer, heston, base)", -1, "athena_scenarios.png"),
-    ("Athena/athena_pricer.ipynb", "plot_greeks_bars(", -1, "athena_greeks.png"),
-    ("Athena/athena_pricer.ipynb", "plot_greek_profiles(", -1, "athena_profiles.png"),
+    ("ax.bar(calls.index", -1, "proba_call.png"),
+    ("plot_scenarios(pricer, heston, base)", -1, "simulated_paths.png"),
+    ("protection_sweep = sweep(", -1, "protection_move.png"),
+    ("autocall_sweep = sweep(", -1, "autocall_move.png"),
+    ("vol_sweep = market_sweep(", -1, "vol_move.png"),
+    ("dividend_sweep = market_sweep(", -1, "dividend_move.png"),
+    ("rate_sweep = market_sweep(", -1, "rate_move.png"),
+    ("spread_sweep = market_sweep(", -1, "spread_move.png"),
+    ("maturity_sweep = market_sweep(", -1, "maturity_move.png"),
+    ("skew_sweep = market_sweep(", -1, "skew_move.png"),
+    ("base_profiles = Greeks(", -1, "hedging_profiles.png"),
+    ('fair = summary["fair coupon (% p.a.)"]', -1, "fair_coupons.png"),
+    ("plot_redemption_profiles({", -1, "redemption_profiles.png"),
+    ("plot_call_probabilities(pricer, heston, {", -1, "call_probabilities_features.png"),
+    ("plot_greeks_bars(greeks", -1, "athena_greeks.png"),
 ]
 
 
 def extract():
     os.makedirs(FIGURES, exist_ok=True)
-    for notebook, fragment, position, name in TARGETS:
-        with open(os.path.join(PRODUCTS, notebook), encoding="utf-8") as f:
-            cells = json.load(f)["cells"]
+    with open(os.path.join(PRODUCTS, NOTEBOOK), encoding="utf-8") as f:
+        cells = json.load(f)["cells"]
+    for fragment, position, name in TARGETS:
         images = [o["data"]["image/png"] for c in cells if c["cell_type"] == "code" and fragment in "".join(c["source"])
                   for o in c.get("outputs", []) if "image/png" in o.get("data", {})]
         if not images:
-            print(f"/!\\ no image found for {name} : execute {notebook} first")
+            print(f"/!\\ no image found for {name} : execute {NOTEBOOK} first")
             continue
         with open(os.path.join(FIGURES, name), "wb") as out:
             out.write(base64.b64decode(images[position]))

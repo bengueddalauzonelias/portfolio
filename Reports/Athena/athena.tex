@@ -16,6 +16,7 @@
 \usepackage{pgfplots}
 \usepackage[section]{placeins}
 \usepackage{booktabs, multirow}
+\usepackage{makecell}
 \usepgfplotslibrary{groupplots}
 \pgfplotsset{compat=1.17}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric}
@@ -58,14 +59,16 @@ We price single-underlying Athena autocallable notes, whose coupon is paid at th
 12 February 2025. The underlying follows a Heston model calibrated to the implied volatility surface (RMSE 0.42
 volatility point), with a drift read from a forward curve bootstrapped from put--call parity. The note is described
 by a single parametrisation covering the observation frequency, snowball or fixed coupons, autocall barrier and
-step-down, non-call period, European, American continuous or American daily capital protection, airbag and capital
-guarantee. The notes are priced by Monte Carlo with antithetic variates and a control variate; the American
-protection is handled with the Brownian bridge crossing probability as a conditional expectation. The pricer
-recovers three closed-form limit cases within one standard error. We report the fair coupon (price at par) of 16
-variants together with their scenario statistics: the base Athena (4 years, annual observations, autocall at
-100\%, European protection at 60\%) pays 9.41\% a year, is called at the first date with probability 55.7\% and
-loses capital with probability 9.1\%. Switching to an American protection adds 1.77 points of coupon. The note is
-short volatility ($-0.55$ per vol point on a nominal of 100) and short dividends ($-1.12$ per point of carry).
+step-down, non-call period, European, American continuous or American daily capital protection, airbag, buffer,
+capital guarantee, range accrual coupon, duo call mechanism and look back. The notes are priced by Monte Carlo with
+antithetic variates and a control variate; the American protection is handled with the Brownian bridge crossing
+probability as a conditional expectation. The pricer recovers three closed-form limit cases within one standard
+error. The base Athena (4 years, quarterly observations, snowball coupon, autocall at 100\%, European protection at
+60\%) has a fair coupon of 10.54\% a year: it is called at the first date with probability 55.4\%, lives 1.03 years
+on average and loses capital with probability 5.2\%. We report its sensitivities to the barriers and to the market
+(volatility, dividends, rates, issuer spread, maturity, skew), its hedge, and the fair coupon of 18 variants, from
+4.83\% for a full capital guarantee to 12.53\% for an American protection. The note is short volatility ($-0.32$ per
+vol point on a nominal of 100) and short dividends ($-0.69$ per point of carry).
 \end{abstract}
 
 \clearpage
@@ -84,7 +87,7 @@ This report studies the \textbf{Athena}, whose coupon is paid only when the note
 over time (\emph{snowball}). The other main family, the Phoenix, whose coupon is paid at each observation date where
 the index is above a coupon barrier, is treated in a companion report \cite{benguedda2026phoenix}.
 On top of this structure, issuers combine many features: observation frequency, step-down of the autocall barrier,
-non-call period, European or American protection, airbag, capital guarantee. We will have a look on how to price these different versions in a single framework, on real market data, and measure how each feature moves the fair coupon, the probabilities of the scenarios and the Greeks.
+non-call period, European or American protection, airbag, buffer, capital guarantee, range accrual coupon, duo call mechanism, look back. We will have a look on how to price these different versions in a single framework, on real market data, and measure how each feature moves the fair coupon, the probabilities of the scenarios and the Greeks.
 
 The model is the Heston model calibrated in \cite{benguedda2026heston} to the CAC40 implied volatility surface, and the Monte Carlo engine is the one used for barrier options in \cite{benguedda2026barrier}. The scripts and
 notebooks are open source; Section~\ref{sec:implementation} describes the code.
@@ -102,10 +105,10 @@ $P_k \ge B^{\mathrm{call}}_k$ is the call date $\tau$.
 
 \paragraph{Redemption at maturity.} If the note is never called, it is redeemed at $T$ at
 \begin{equation}\label{eq:redemption}
-R_T = N\left[(1 - \ind_{\mathrm{KI}}) + \ind_{\mathrm{KI}}\,\max\!\Big(\phi,\ \min\big(1,\ P_T/K_{\mathrm{put}}\big)\Big)\right],
+R_T = N\left[(1 - \ind_{\mathrm{KI}}) + \ind_{\mathrm{KI}}\,\max\!\Big(\phi,\ \min\big(1,\ P_T/K_{\mathrm{put}} + b\big)\Big)\right],
 \end{equation}
 where $\ind_{\mathrm{KI}}$ is the knock-in event of the protection, $K_{\mathrm{put}}$ the strike of the short put
-and $\phi$ the capital floor. The knock-in event is
+$\phi$ the capital floor and $b$ the buffer ($b = 0$ by default). The knock-in event is
 \begin{itemize}
 \item \emph{European protection}: $P_T < B^{\mathrm{prot}}$;
 \item \emph{American protection}: the index touches $B^{\mathrm{prot}}\Sref$ at any time before maturity,
@@ -114,7 +117,7 @@ continuously or on daily closes.
 The standard note has $K_{\mathrm{put}} = 1$ and $\phi = 0$: below the barrier, the investor receives
 $N P_T$ and the redemption jumps from $N$ to $N B^{\mathrm{prot}}$ at the barrier. The \emph{airbag} note has
 $K_{\mathrm{put}} = B^{\mathrm{prot}}$: the redemption is continuous at the barrier and equal to
-$N P_T / B^{\mathrm{prot}}$ below it. A \emph{capital guarantee} sets $\phi > 0$. Figure~\ref{fig:redemption}
+$N P_T / B^{\mathrm{prot}}$ below it. A \emph{capital guarantee} sets $\phi > 0$. A \emph{buffer} sets $b > 0$ with $B^{\mathrm{prot}} = 1 - b$: the investor only loses below $1 - b$, one for one, without loss jump. Figure~\ref{fig:redemption}
 draws the three profiles.
 
 \begin{figure}[h]
@@ -144,6 +147,16 @@ N(1 + c_k), \qquad c_k = \begin{cases} c\, t_k & \text{snowball (the coupons acc
 with $c$ the coupon rate per annum. If the note is not called, no coupon is paid and the redemption is
 \eqref{eq:redemption}. A call at maturity ($P_T \ge B^{\mathrm{call}}_n$) pays the last coupon.
 
+\paragraph{Optional features.} Three features change the call or the coupon:
+\begin{itemize}
+\item \emph{range accrual}: the coupon only accrues on the dates where $L \le S_t/\Sref \le U$, so that a call at
+$t_k$ pays $c$ times the time spent in the range instead of $c\,t_k$;
+\item \emph{duo}: a second call level $B^{\mathrm{duo}}_k < B^{\mathrm{call}}_k$; if
+$B^{\mathrm{duo}}_k \le P_k < B^{\mathrm{call}}_k$, the note is called with a fraction $\alpha$ of the coupon;
+\item \emph{look back}: $\Sref$ is the minimum (or the average) of the index over $[0, t_{\mathrm{lb}}]$, path by path,
+instead of the initial fixing, all the barriers being fractions of this reference.
+\end{itemize}
+
 \subsection{Parametrisation}
 Table~\ref{tab:parameters} lists the parameters of the class \code{Athena}; every variant of
 Section~\ref{sec:athena} is one of these parameters changed.
@@ -163,6 +176,10 @@ Autocall barrier & \code{autocall\_barrier}, \code{step\_down} & fraction of $\S
 Non-call period & \code{first\_call\_date} & years \\
 Capital protection & \code{protection\_barrier}, \code{protection\_type} & fraction of $\Sref$; \code{european}, \code{american}, \code{american\_discrete} \\
 Airbag, guarantee & \code{put\_strike}, \code{floor} & fraction of $\Sref$, fraction of the nominal \\
+Buffer & \code{buffer} & fraction of $\Sref$, with \code{protection\_barrier} $= 1 - b$ \\
+Range accrual & \code{accrual\_range} & $(L, U)$, fractions of $\Sref$ \\
+Duo & \code{duo\_barrier}, \code{duo\_coupon\_ratio} & fraction of $\Sref$, fraction $\alpha$ of the coupon \\
+Look back & \code{lookback}, \code{lookback\_type} & years, \code{min} or \code{average} \\
 \bottomrule
 \end{tabular}}
 \caption{Parameters of the Athena (\code{Products/Athena/athena.py}).}
@@ -415,9 +432,11 @@ We will now look at the different sensitivities of the product and what are the 
 
 \subsection*{Volatility}
 
-The investor is short PDI then he is short $\nu$. The PDI price decreases with volatility so an increase of the volatility will decrease the value of the note.
-
-If the product is not contracted yet it will incread the proba to call the product and then it increases the coupon paid to the investor.
+The investor is short the $\mathrm{PDI}^{ac}$, so he is short vega: the price of a down-and-in put increases with the
+volatility, since a higher volatility makes it more likely that the index ends below the protection barrier. An
+increase of the volatility therefore decreases the value of the note. If the product is not contracted yet, the put
+sold by the investor is more valuable and finances a higher coupon $c$. The call probabilities move much less: a
+higher variance slightly lowers the median of the index, hence the probability to be called at the first dates.
 
 
 \subsection*{Protection barrier}
@@ -428,63 +447,79 @@ If the protection barrier is higher, then it is more probable to cross it and it
 \subsection*{Recall Barrier}
 
 
-If the recall barrier is increased, it is less probable to be recall before maturity, then it increases the coupon $c$.
+If the recall barrier is increased, it is less probable to be recalled before maturity: the note lives longer and is
+more often exposed to the put at maturity, so it increases the coupon $c$.
 
 
 \subsection*{Dividend}
 
 
-If the underlying asset increases its dividend, it increases the value of $c$
-
-
-Peut etre parce que l'investisseur ne touche pas les dividendes donc demandera une rémunération plus élevée.
+If the underlying asset increases its dividend, every forward $F(0,t)$ decreases: under $\Q$ the index drifts down,
+the note is called less often and the knock-in is more likely. The investor, who does not receive the dividends of
+the index, is short dividends: the value of the note decreases and the coupon $c$ increases.
 
 
 \subsection*{Spread}
 
-
+The issuer funds itself at its own rate $r + s$, where $s$ is its credit spread, and discounts the cash flows of the
+note at this rate. A higher spread lowers $\E[D(\tau)]$: the funding benefit $1 - \E[D(\tau)]$ of the issuer, which
+appears in the numerator of \eqref{eq:fair-coupon}, increases and is given back to the investor through a higher
+coupon $c$. The counterpart is the credit risk of the issuer, borne by the investor.
 
 
 \subsection*{Risk free rate}
 
-
+A higher risk-free rate has two opposite effects. It raises the forwards, so the note is called earlier and the
+knock-in is less likely, which lowers the value of the put and the coupon. But it also lowers the discount factors:
+the funding benefit $1 - \E[D(\tau)]$ increases, which raises the coupon. For the base case the second effect
+dominates, and the coupon $c$ increases with the rates.
 
 
 \subsection*{Maturity}
 
-
+A longer maximal maturity leaves more time to the paths that are not called to end below the protection barrier: the
+put is more valuable and the coupon $c$ increases. The effect decreases with the maturity, since most notes are called
+during the first year and the additional premium is spread over a longer expected life.
 
 
 \subsection*{Skew}
 
-
-
-
+The put decomposes into a vanilla put struck at the barrier and a digital put; the digital part is the derivative of
+the vanilla price with respect to the strike, so it is directly priced by the skew. A steeper (more negative) skew
+makes the low strikes more expensive and should raise the coupon $c$. But the skew also changes the distribution of
+the index: with a negative skew, the distribution is more left-skewed and its median is higher, so the note is called
+more often at the first dates and lives shorter. For an Athena the two effects largely offset each other.
 
 
 \subsection*{Correlation}
 
-
-
+On a single underlying, the only correlation is the one between the index and its volatility, which drives the skew.
+For a worst-of Athena on several underlyings, the investor is long correlation: a lower correlation makes it more
+likely that one of the underlyings ends below the protection barrier, and less likely that all of them are above the
+autocall barrier at the same time. The put is more valuable, the call less likely, and the coupon $c$ increases. This
+is why worst-of notes pay higher coupons; they are outside the scope of this report
+(Section~\ref{sec:limitations}).
 
 
 \subsection{Pricing : A numerical example}
 
 
-Let us now consider a synthetic Athena issued by a risky issuer, which
-requires taking into account the credit spread of the issuer. The product
-is written on the CAC~40 index (dividends not reinvested). Its initial level
-is fixed on 31 January 2025 and it matures in November 2027. A coupon $c$
-accrues every quarter and is paid upon redemption. The underlying is
-observed quarterly: at each observation date, the product is redeemed
-early if the index closes at or above $100\%$ of its initial level. If
-the product has not been called, the investor receives at maturity the
-notional plus the accrued coupons if the index is at or above its initial
-level, the notional alone if it is at or above the protection barrier
-$B_p = 60\%$, and the notional reduced by the full decline of the index
-otherwise.
+Let us now consider a synthetic Athena written on the CAC~40 index (dividends not reinvested). Its initial level
+is fixed on 12 February 2025, the date of the market data, and its maximal maturity is 4 years. A coupon $c$ of 6\%
+per annum accrues every quarter and is paid upon redemption (snowball). The underlying is observed quarterly: at
+each observation date, the product is redeemed early if the index closes at or above $100\%$ of its initial level.
+If the product has not been called, the investor receives at maturity the notional plus the accrued coupons if the
+index is at or above its initial level, the notional alone if it is at or above the protection barrier
+$B_p = 60\%$, and the notional reduced by the full decline of the index otherwise. The base case is priced without
+the credit spread of the issuer, whose impact is studied with the other market parameters below.
 
+\subsubsection{Model}
 
+The underlying follows the Heston model of Section~\ref{sec:model}, calibrated on the CAC~40 implied volatility
+surface of 12 February 2025, with the forward curve bootstrapped from put--call parity. The paths are simulated on a
+weekly grid with 50{,}000 paths (Section~\ref{sec:method}); a daily grid is used for the daily observations and the
+daily monitored protection. All the figures and tables of this section come from the notebook
+\code{Products/Athena/athena\_synthetic\_pricing.ipynb}.
 
 \subsubsection{Pricing}
 
@@ -564,7 +599,7 @@ We then present the distribution of the different paths:
 \label{fig:simulated_paths}
 \end{figure}
 
-The expected life of this product is pretty short and because the investor is short a PDI, when the product losses money it losses a large amount of money.
+The expected life of this product is pretty short (1.03 years for a maximal maturity of 4 years, the median life being three months), and the coupon actually received is only 3.01\% of the nominal on average, far below $4 \times 6\%$. Because the investor is short a PDI, the capital loss is rare (5.22\%) but large when it happens: the redemption jumps from 100 to 60 at the protection barrier, and the expected loss given a loss is about 58\% of the nominal.
 
 
 
@@ -573,7 +608,7 @@ The expected life of this product is pretty short and because the investor is sh
 
 \subsubsection{Sensitivities}
 
-We are now interested in how the different parameters impact the price of a basic Athena product. We notice that the price after the emission of the note and the fair-coupon $c^*$ move at the opposite one to another.
+We are now interested in how the different parameters impact the price of a basic Athena product. We notice that the price after the emission of the note and the fair-coupon $c^\star$ move in opposite directions: a change that lowers the value of the note for a given coupon must be paid back by a higher coupon at issuance. Each parameter is moved alone, all the others being those of the base case, and the paths are the same for every scenario (common random numbers), so that the differences are not blurred by the Monte Carlo noise.
 \clearpage
 \subsubsection*{Protection barrier}
 
@@ -581,13 +616,12 @@ We plotted the different parameters against a move of the protection barrier:
 
 \begin{figure}[h]
 \centering
-\figfile{protection_move.png}{0.9\textwidth}
-\caption{Move of the protection barrier}
+\figfile{protection_move.png}{\textwidth}
+\caption{Fair coupon, probability of a capital loss, expected loss and expected life as functions of the protection barrier.}
 \label{fig:protection_move}
 \end{figure}
 
-As we can see an augmentation of the protection barrier increases the value of $c^*$. It is easy to understand, in fact an increase of the protection barrier exposes more the investor to do not receive the coupon at the redemption date, the investor then takes more risk and must be remunerated for this risk. As well, the probability of capital loss and expected loss increasein the same direction as the barrier option.
-
+As we can see, an increase of the protection barrier increases the value of $c^\star$. It is easy to understand: a higher protection barrier exposes the investor more often to a capital loss at maturity, so the down-and-in put that he sells is more valuable, and he must be remunerated for this risk. The probability of a capital loss and the expected loss increase in the same direction as the barrier. The call probabilities, hence the expected life, do not move: the protection only matters at maturity, for the paths that were never called. Above 100\%, nothing changes anymore: since the put is struck at 100\%, a knocked-in path that ends above its initial level is redeemed at par anyway.
 
 \begin{table}[htbp]
   \centering
@@ -621,86 +655,284 @@ As we can see an augmentation of the protection barrier increases the value of $
   \label{tab:athena-sensi-protection}
 \end{table}
 
-
-
-
 \clearpage
 \subsubsection*{Autocall barrier}
-
 
 We also plotted the reaction of the different parameters for a move of the autocall barrier.
 
 \begin{figure}[h]
 \centering
-\figfile{autocall_move.png}{0.9\textwidth}
-\caption{Move of the autocall barrier}
+\figfile{autocall_move.png}{\textwidth}
+\caption{Fair coupon, probability of a capital loss, expected loss and expected life as functions of the autocall barrier.}
 \label{fig:autocall_move}
 \end{figure}
-
-
-
-
-\clearpage
-\subsubsection{Hedging}
-
-
-If we think from the desk's point of view there are long a PDI, their main sensibility to manage is the delta.
-
-For real hedging of this kind of product, have a look to the paper pricing of barrier options \footnote{\url{https://portfolio-eliasbenguedda.fr/projects/barriere_option.html}}
-
-
-\clearpage
-\subsection{Features of Athena products}
-
-We have seen the basic Athena product, its construction, its sensitivities and its hedging. Now, the investor could want to have better guarantees or a higher coupon. For this purpose, we can add some interesting features to the product that we will expose in the following parts of this paper.
-\clearpage
-\subsubsection{Exercise frequency}
-
-
-First thing first, the exercise frequency can be changed. Instead of looking at the level of the underlying stock, one could want to have a daily exercise frequency. This change of the frequency would have as an impact to increase the value of $c^*$, to remunerate the investor bigger risk taken.
-
-If we change in our product the observation frequency from quarterly to daily, we have the following results:
-
 
 \begin{table}[htbp]
   \centering
   \small
-  \begin{tabular}{llrr}
+  \begin{tabular}{rcccc}
     \toprule
-     & & \textbf{Base case} & \textbf{Daily observation} \\
+    \makecell{Autocall\\barrier (\%)} &
+    \makecell{Fair coupon\\(\% p.a.)} &
+    \makecell{Probability of a\\capital loss (\%)} &
+    \makecell{Expected loss\\(\% nominal)} &
+    \makecell{Expected life\\(years)} \\
     \midrule
-    \multirow{3}{*}{Contract}
-      & Number of observations              & 16    & 1008 \\
-      & Observation frequency (years)       & 0.25  & 1/252 \\
-      & First call date (years)             & 0.25  & 1/252 \\
-    \midrule
-    \multirow{3}{*}{Pricing}
-      & Price (\% nominal)                  & 97.80 & 99.65 \\
-      & 95\% confidence interval ($\pm$)    & 0.11  & 0.05 \\
-      & Fair coupon (\% p.a.)               & 10.54 & 11.74 \\
-    \midrule
-    \multirow{6}{*}{Scenarios}
-      & Probability to reach maturity (\%)  & 13.29 & 1.80 \\
-      & Probability of a capital loss (\%)  & 5.22  & 0.78 \\
-      & Expected loss at maturity (\% nominal) & 3.05 & 0.46 \\
-      & Expected life (years)               & 1.03  & 0.13 \\
-      & Expected number of coupons          & 0.87  & 0.98 \\
-      & Expected coupon paid (\% nominal)   & 3.01  & 0.38 \\
+     50 &  2.65 &  0.00 & 0.00 & 0.25 \\
+     60 &  2.65 &  0.00 & 0.00 & 0.25 \\
+     70 &  2.75 &  0.04 & 0.02 & 0.25 \\
+     80 &  3.54 &  0.35 & 0.21 & 0.28 \\
+     90 &  6.66 &  1.70 & 1.01 & 0.42 \\
+     \textbf{100} & \textbf{10.54} & \textbf{5.22} & \textbf{3.05} & \textbf{1.03} \\
+    110 & 12.69 & 10.48 & 6.04 & 2.39 \\
+    120 & 16.89 & 12.79 & 7.33 & 3.21 \\
     \bottomrule
   \end{tabular}
-  \caption{Comparison between quarterly and daily autocall observation, all
-           other parameters being those of the base case.}
-  \label{tab:athena-daily-observation}
+  \caption{Fair coupon, loss statistics and expected life as a function of the autocall barrier, all other parameters
+           being those of the base case (in bold).}
+  \label{tab:athena-sensi-autocall}
 \end{table}
 
-We observe that the fair coupon is now 11.74\%. 
+A higher autocall barrier makes the call less likely: the note lives longer (from 0.42 years at 90\% to 2.39 years
+at 110\%), more paths reach maturity and are exposed to the put, and the fair coupon increases steeply, from 6.66\%
+at 90\% to 12.69\% at 110\%. The low barriers give a useful limit case: below 60\%, the note is called at the first
+date on every path, so that it is nothing but a three-month deposit. The fair coupon is then
+$c^\star = (1/D(t_1) - 1)/t_1 \approx 2.65\%$, the three-month rate: without put and without any risk of a long life,
+the investor only receives the funding rate.
+
+\clearpage
+\subsubsection*{Market parameters}
+
+The note is now kept unchanged (coupon 6\%, barriers of the base case) and the market moves. For each scenario we
+report the price of the note at a coupon of 6\%, the fair coupon, the probability of a call at the first date, the
+probability of a capital loss and the expected life.
+
+\paragraph{Volatility.} $\sqrt{v_0}$ and $\sqrt{\theta}$ are shifted together by $-3$ to $+3$ volatility points
+(Figure~\ref{fig:vol_move}, Table~\ref{tab:athena-market}). One volatility point costs about 0.33 on a nominal of 100
+and adds about 0.65 point of fair coupon: the investor is short the down-and-in put, whose value increases with the
+volatility (the probability of a capital loss goes from 3.79\% to 6.70\%). The call probabilities move little: a
+higher variance lowers the median of $S_t$, so the probability to be above 100\% at the first date decreases slightly
+(from 56.8\% to 54.2\%) and the expected life increases slightly.
+
+\begin{figure}[h]
+\centering
+\figfile{vol_move.png}{\textwidth}
+\caption{Base case: price at 6\%, fair coupon, probability of a capital loss and expected life as functions of a
+parallel shift of the volatility level.}
+\label{fig:vol_move}
+\end{figure}
+
+\paragraph{Dividends.} A higher borrow + dividend yield lowers every forward $F(0,t)$: the index drifts down under
+$\Q$, the note is called less often (expected life from 0.96 to 1.11 years for a shift from $-1\%$ to $+1\%$) and
+the knock-in is more likely (4.51\% to 6.07\%). The investor, who does not receive the dividends of the index, is
+short dividends: one point of dividend yield costs about 0.6 on 100 and adds about 1.3 points of coupon, twice the
+effect of one volatility point.
+
+\begin{figure}[h]
+\centering
+\figfile{dividend_move.png}{\textwidth}
+\caption{Base case as a function of a parallel shift of the borrow + dividend yield.}
+\label{fig:dividend_move}
+\end{figure}
+
+\paragraph{Risk-free rate.} A parallel shift of the zero-coupon curve has two opposite effects. The forwards move by
+$e^{\Delta r\, T}$: the note is called earlier and the knock-in is less likely, which lowers the value of the put.
+But the cash flows are also discounted more, and the funding benefit of the issuer $1 - \E[D(\tau)]$ increases. For
+the base case the second effect dominates: the price at 6\% decreases with the rates (98.09 at $-1\%$, 97.51 at
+$+1\%$) and the fair coupon increases from 9.95\% to 11.16\%. This is why the coupons of autocallable notes rise
+with the level of interest rates.
+
+\begin{figure}[h]
+\centering
+\figfile{rate_move.png}{\textwidth}
+\caption{Base case as a function of a parallel shift of the zero-coupon curve.}
+\label{fig:rate_move}
+\end{figure}
+
+\paragraph{Issuer spread.} The base case is priced without credit risk. A real issuer funds itself at $r + s$, $s$
+being its credit spread, and discounts the cash flows of the note at this rate, while the drift of the index is
+unchanged. The scenarios do not move, but every cash flow is worth less: each 50bp of spread costs about 0.44 on 100
+and adds about 0.96 point of fair coupon (from 10.57\% at $s = 0$ to 14.40\% at $s = 200$bp, the control variate
+being switched off for this sweep). A riskier issuer can therefore offer a higher coupon, the counterpart being the
+credit risk borne by the investor.
+
+\begin{figure}[h]
+\centering
+\figfile{spread_move.png}{\textwidth}
+\caption{Base case as a function of the credit spread of the issuer.}
+\label{fig:spread_move}
+\end{figure}
+
+\paragraph{Maturity.} With a longer maximal maturity, the paths that are not called early have more time to fall
+below the protection barrier (probability of a loss from 1.67\% at 1 year to 5.62\% at 5 years), and the put is more
+valuable. The fair coupon increases with the maturity, but at a decreasing rate (7.56\%, 9.50\%, 10.21\%, 10.54\% and
+10.60\% from 1 to 5 years): most notes are called in the first year whatever the maturity, and the additional put
+premium is spread over a longer expected life.
+
+\begin{figure}[h]
+\centering
+\figfile{maturity_move.png}{\textwidth}
+\caption{Same note with a maximal maturity from 1 to 5 years.}
+\label{fig:maturity_move}
+\end{figure}
+
+\paragraph{Skew.} In the Heston model, the skew of the implied volatility surface is mainly driven by the
+spot-variance correlation $\rho$, calibrated at $-0.605$. We move $\rho$ alone, from $-0.9$ to $0$, the variance level
+being unchanged. A more negative $\rho$ steepens the skew: the 4-year European put struck at 60\% is worth 2.39\% of
+$S_0$ at $\rho = -0.9$ against 1.54\% at $\rho = 0$, and the digital part of the put sold by the investor is more
+expensive. But a more negative skew also makes the distribution of $S_t$ more left-skewed, with a higher median: the
+note is more often called at the first date (60.0\% at $\rho = -0.9$ against 46.9\% at $\rho = 0$) and its expected
+life is shorter. For the Athena, the two effects offset each other: the fair coupon stays between 10.3\% and 10.6\%
+over the whole range. The skew is a risk on the distribution of the scenarios more than on the price.
+
+\begin{figure}[h]
+\centering
+\figfile{skew_move.png}{\textwidth}
+\caption{Base case as a function of the spot-variance correlation $\rho$ of the Heston model.}
+\label{fig:skew_move}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+ & \textbf{Scenario} & \textbf{Price at 6\%} & \textbf{Fair coupon} & \textbf{P(call $t_1$)} & \textbf{P(loss)} & \textbf{E[life]} \\
+ & & & \textbf{(\% p.a.)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(y)} \\
+\midrule
+\multirow{3}{*}{Volatility} & $-3$ vol pts & 98.70 & 8.69 & 56.82 & 3.79 & 1.00 \\
+ & base & 97.80 & 10.54 & 55.43 & 5.22 & 1.03 \\
+ & $+3$ vol pts & 96.82 & 12.56 & 54.17 & 6.70 & 1.07 \\
+\midrule
+\multirow{2}{*}{Dividend yield} & $-1\%$ & 98.35 & 9.38 & 56.95 & 4.51 & 0.96 \\
+ & $+1\%$ & 97.13 & 12.02 & 53.88 & 6.07 & 1.11 \\
+\midrule
+\multirow{2}{*}{Rates} & $-1\%$ & 98.09 & 9.95 & 53.88 & 6.07 & 1.11 \\
+ & $+1\%$ & 97.51 & 11.16 & 56.95 & 4.51 & 0.96 \\
+\midrule
+\multirow{3}{*}{Issuer spread} & 0bp & 97.78 & 10.57 & 55.43 & 5.22 & 1.03 \\
+ & 100bp & 96.89 & 12.48 & 55.43 & 5.22 & 1.03 \\
+ & 200bp & 96.03 & 14.40 & 55.43 & 5.22 & 1.03 \\
+\midrule
+\multirow{3}{*}{Maturity} & 1 year & 99.57 & 7.56 & 55.43 & 1.67 & 0.52 \\
+ & 2 years & 98.71 & 9.50 & 55.43 & 3.54 & 0.73 \\
+ & 5 years & 97.56 & 10.60 & 55.43 & 5.62 & 1.16 \\
+\midrule
+\multirow{2}{*}{Correlation $\rho$} & $-0.9$ & 97.99 & 10.51 & 59.97 & 4.82 & 0.91 \\
+ & $0$ & 97.65 & 10.33 & 46.89 & 5.60 & 1.28 \\
+\bottomrule
+\end{tabular}
+\caption{Base case under moved market parameters (coupon 6\%, nominal 100). Base case: price 97.80, fair coupon
+10.54\%.}
+\label{tab:athena-market}
+\end{table}
+
+\clearpage
+\subsubsection{Hedging}
+
+If we think from the desk's point of view, the issuer is short the note: it is long the down-and-in put sold by the
+investor and short the autocall feature. Its main sensitivity to manage is the delta, which it hedges with futures on
+the index; it must also manage the vega, which it hedges with listed puts, and the dividends, which it hedges with
+dividend futures. Table~\ref{tab:athena-hedge} gives the hedge of the base case at inception, for a nominal of
+1 million euros (10{,}000 notes of 100).
+
+\begin{table}[htbp]
+\centering
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrl@{}}
+\toprule
+\textbf{Risk of the note} (nominal 100) & \textbf{Value} & \textbf{Hedge of the issuer} (nominal 1M) \\
+\midrule
+Delta & 0.00470 per index point & buy 47 index units ($\approx$ 378{,}000 EUR of futures) \\
+Vega & $-0.315$ per vol point & long 3{,}150 EUR per vol point: sell 163 puts 4 years, strike 60\% \\
+Dividend & $-0.689$ per $+1\%$ & long 6{,}890 EUR per point of yield: sell dividend futures \\
+Rho & $-0.210$ per $+1\%$ & long 2{,}100 EUR per point of rate: receive fixed on a swap \\
+\bottomrule
+\end{tabular}}
+\caption{Base case: Greeks of the note and hedge of the issuer at inception. The vega of the 4-year put struck at
+60\% is 19.3 per vol point and per unit of index.}
+\label{tab:athena-hedge}
+\end{table}
+
+The note is equivalent to 37.8\% of its nominal invested in the index: the delta is far below one because the
+investor only bears the downside below the protection barrier and gives up the upside above the autocall barrier.
+This exposure is not stable (Figure~\ref{fig:hedging_profiles}, the initial fixing staying at $S_0 = 8042$): when the
+index falls towards the protection barrier, the call becomes unlikely and the put gets closer to the money, so the
+delta of the note increases from 0.0046 at $S_0$ to 0.0146 at the barrier (4825), and the issuer must buy index in a
+falling market. The vega of the note is most negative between 60\% and 70\% of the initial level, where the knock-in
+is most uncertain. Close to maturity, the jump of the redemption at the protection barrier (the digital part of the
+put) makes the delta and the gamma very large around the barrier: this pin risk is the main difficulty of the hedge,
+and the reason why issuers often prefer an airbag or a buffer, whose payoff is continuous at the barrier.
+
+\begin{figure}[h]
+\centering
+\figfile{hedging_profiles.png}{\textwidth}
+\caption{Base case: price, delta, gamma and vega of the note as functions of the spot (30{,}000 paths). The issuer
+holds the opposite of these Greeks.}
+\label{fig:hedging_profiles}
+\end{figure}
+
+For real hedging of this kind of product, have a look to the paper pricing of barrier options\footnote{\url{https://portfolio-eliasbenguedda.fr/projects/barriere_option.html}}.
+
+\clearpage
+\subsection{Features of Athena products}
+
+We have seen the basic Athena product, its construction, its sensitivities and its hedging. Now, the investor could
+want to have better guarantees or a higher coupon. For this purpose, we can add some interesting features to the
+product that we will expose in the following parts of this paper. Each feature is one parameter of the class
+\code{Athena} (Table~\ref{tab:parameters}), all the other terms being those of the base case.
+\clearpage
+\subsubsection{Exercise frequency}
+
+First thing first, the exercise frequency can be changed. Instead of looking at the level of the underlying every
+quarter, one could want to observe it every year, every month, or even every day. Table~\ref{tab:athena-frequency}
+gives the results from annual to daily observations.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Annual} & \textbf{Semi-annual} & \textbf{Monthly} & \textbf{Daily} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Number of observations & 16 & 4 & 8 & 48 & 1008 \\
+      & Observation frequency (years) & 0.25 & 1 & 0.5 & 1/12 & 1/252 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 96.61 & 97.22 & 98.62 & 99.65 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.12 & 0.12 & 0.09 & 0.05 \\
+      & Fair coupon (\% p.a.) & 10.54 & 9.41 & 9.93 & 11.11 & 11.74 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 25.70 & 18.61 & 7.77 & 1.80 \\
+      & Probability of a capital loss (\%) & 5.22 & 9.06 & 6.97 & 3.13 & 0.78 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 5.27 & 4.08 & 1.83 & 0.46 \\
+      & Expected life (years) & 1.03 & 2.06 & 1.48 & 0.59 & 0.13 \\
+      & Expected number of coupons & 0.87 & 0.74 & 0.81 & 0.92 & 0.98 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 6.22 & 4.39 & 1.66 & 0.38 \\
+    \bottomrule
+  \end{tabular}}
+  \caption{Effect of the observation frequency of the autocall barrier, all other parameters being those of the base case.}
+  \label{tab:athena-frequency}
+\end{table}
+
+More frequent observations call the note earlier: the expected life falls from 2.06 years (annual) to 0.13 year
+(daily), and the probability of a capital loss from 9.06\% to 0.78\%. One could expect a lower coupon, since the
+investor takes less risk. It is the opposite: the fair coupon increases from 9.41\% to 11.74\%. The snowball coupon
+$c\,t_k$ is paid on the life of the note, and with daily observations the note is usually called within a few weeks:
+the investor receives only 0.38\% of coupon on average, against 6.22\% with annual observations. The put premium,
+smaller in value, is spread over a much shorter life, which requires a higher coupon rate per annum.
 
 \clearpage
 \subsubsection{Step-down barrier}
 
-The step down feature is really easy to understand. In fact, periodically, the auto call barrier is moving. It can be in both side. Generally the barrier is decreasing over time. We took the example of a 1\% decreasing barrier at each observation date. That means at the end of the life of the product (if we don't consider the maturity as a redemption date), the barrier will be at 85\% of the initial spot price.
+The step down feature is really easy to understand. In fact, periodically, the autocall barrier is moving. It can be
+in both directions, but generally the barrier is decreasing over time. We took the example of a barrier decreasing
+by 1\% at each observation date: at the last observation date, the barrier is at 85\% of the initial level.
 We have the following result:
-
 
 \begin{table}[htbp]
   \centering
@@ -733,184 +965,458 @@ We have the following result:
   \label{tab:athena-step-down}
 \end{table}
 
+The lower barriers of the last dates call the notes that were drifting slightly below their initial level: the
+probability to reach maturity falls from 13.29\% to 8.12\%, and these paths, which were the closest to the
+protection barrier, are no longer exposed to the put. The note is worth more to the investor (98.81 instead of 97.80
+at 6\%) and the fair coupon falls to 8.24\%. The step-down is a way to sell a note with a higher probability of
+success, at the cost of a lower coupon. Note that a call at a barrier below 100\% pays the coupon even if the index
+has lost up to 15\%.
 
 \clearpage
-
 \subsubsection{Airbag}
 
-The airbag effect is also easy to understand
+The airbag effect is also easy to understand: the put sold by the investor is struck at the protection barrier
+instead of 100\%. Below 60\%, the investor receives $N P_T / B^{\mathrm{prot}}$ instead of $N P_T$: the redemption
+is continuous at the barrier, and an index at 50\% is redeemed at 83.3 instead of 50 (Figure~\ref{fig:redemption}).
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Airbag} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Put strike (\%) & 100 & 60 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 99.11 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.07 \\
+      & Fair coupon (\% p.a.) & 10.54 & 7.83 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 1.61 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 0.87 & 0.87 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 3.01 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Airbag: the put is struck at the protection barrier (60\%), all other parameters being those of the base case.}
+  \label{tab:athena-airbag}
+\end{table}
 
+The scenarios are exactly those of the base case: only the amount lost changes. The expected loss is halved (1.61\%
+of the nominal instead of 3.05\%), the probability of a loss being unchanged, and the fair coupon falls from 10.54\%
+to 7.83\%. The short put is now a put struck at 60\% on $N/B^{\mathrm{prot}}$ units, without the digital part
+$(1 - B^{\mathrm{prot}})\,\ind_{\{P_T < B^{\mathrm{prot}}\}}$: the airbag removes the jump of the payoff, hence most
+of the skew and pin risks of the issuer.
 
 \clearpage
-
 \subsubsection{Buffer}
 
+With a buffer $b$, the first $b$ of decline of the index is absorbed by the issuer, and the investor loses one for
+one below $1 - b$: the redemption is $N \min(1, P_T + b)$ below the protection barrier $B^{\mathrm{prot}} = 1 - b$.
+We take a buffer of 10\%.
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Buffer 10\%} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Protection barrier (\%) & 60 & 90 \\
+      & Buffer (\%) & 0 & 10 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 97.37 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.10 \\
+      & Fair coupon (\% p.a.) & 10.54 & 11.42 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 11.81 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 3.50 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 0.87 & 0.87 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 3.01 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Buffer of 10\%: the investor only loses below 90\%, one for one, all other parameters being those of the base case.}
+  \label{tab:athena-buffer}
+\end{table}
 
-
-
-
+A buffer of 10\% protects the investor less than a barrier at 60\%: the losses start as soon as the index ends below
+90\%, so the probability of a capital loss rises from 5.22\% to 11.81\% and the fair coupon from 10.54\% to 11.42\%.
+But there is no more loss jump: an index at 55\% is redeemed at 65 instead of 55, and the largest losses are reduced
+by 10 points. The buffer trades a higher probability of small losses for smaller large losses; the issuer, short a
+put spread instead of a put with a digital, has a much smoother hedge.
 
 \clearpage
 \subsubsection{Guaranteed capital}
 
+The capital is guaranteed by flooring the redemption at maturity at $\phi N$: with $\phi = 100\%$, the investor never
+loses capital, with $\phi = 90\%$ he loses at most 10\%.
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Guaranteed 90\%} & \textbf{Guaranteed 100\%} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Capital guaranteed (\%) & 0 & 90 & 100 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 100.09 & 100.57 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.05 & 0.04 \\
+      & Fair coupon (\% p.a.) & 10.54 & 5.81 & 4.83 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 & 0.00 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 0.52 & 0.00 \\
+      & Expected life (years) & 1.03 & 1.03 & 1.03 \\
+      & Expected number of coupons & 0.87 & 0.87 & 0.87 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 3.01 & 3.01 \\
+    \bottomrule
+  \end{tabular}}
+  \caption{Capital guarantee: the redemption at maturity is floored at 90\% or 100\% of the nominal.}
+  \label{tab:athena-guaranteed}
+\end{table}
 
-
-
-
+With a full guarantee, the put disappears: the note is a zero-coupon bond plus the autocall feature, financed only
+by the funding benefit $1 - \E[D(\tau)]$, and the fair coupon falls to 4.83\%. With 90\% guaranteed, the investor
+is only short the put spread between 100\% and 90\%: the probability of a loss is unchanged (5.22\%), but the
+expected loss is divided by six (0.52\% instead of 3.05\%), for a fair coupon of 5.81\%. In the decomposition
+$P_0 = A + cB$, the guarantee removes all or most of $\mathrm{PDI}^{ac}$ from $A$, which leaves little to finance
+the coupon. These notes are mostly sold when rates are high, since the funding benefit is then larger.
 
 \clearpage
 \subsubsection{Coupon range accrual}
 
+With a range accrual coupon, the snowball coupon only accrues on the days where the index is inside a range: a call
+at $t_k$ pays $c$ times the time spent in the range since inception, instead of $c\,t_k$. We take a range of
+$[80\%, 120\%]$, observed on the weekly simulation dates.
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Range accrual 80-120\%} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Range accrual (\%) & -- & [80, 120] \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 97.68 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.11 \\
+      & Fair coupon (\% p.a.) & 10.54 & 10.99 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 3.05 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 0.87 & 0.87 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 2.88 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Range accrual: the coupon only accrues on the weekly dates where the index is between 80\% and 120\%.}
+  \label{tab:athena-range}
+\end{table}
 
-
-
-
-
-
-
+The call dates are those of the base case. The coupon paid at the call is reduced on the paths that went above 120\%
+or below 80\% before being called (2.88\% of coupon on average instead of 3.01\%), so the fair coupon increases
+slightly, from 10.54\% to 10.99\%. The effect is small here because most notes are called at the first dates, before
+the index has time to leave the range; it would be larger with a narrow range or a long non-call period.
 
 \clearpage
 \subsubsection{Duo mechanism}
 
+The duo mechanism adds a second, lower call level: above 100\%, the note is called with the full coupon; between 90\%
+and 100\%, it is also called, but with half of the coupon.
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Duo 90\% / 50\%} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Duo barrier (\%) & -- & 90 \\
+      & Duo coupon ratio & -- & 0.5 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 99.37 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.07 \\
+      & Fair coupon (\% p.a.) & 10.54 & 8.86 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 3.13 \\
+      & Probability of a capital loss (\%) & 5.22 & 1.70 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 1.01 \\
+      & Expected life (years) & 1.03 & 0.42 \\
+      & Expected number of coupons & 0.87 & 0.97 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 1.33 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Duo mechanism: call with the full coupon above 100\%, with half of the coupon between 90\% and 100\%.}
+  \label{tab:athena-duo}
+\end{table}
 
-
-
-
-
-
+The note is now called on almost every path (the probability to reach maturity falls from 13.29\% to 3.13\%), very
+early (expected life 0.42 year): the investor gives up half of the coupon on the paths called between 90\% and
+100\%, but these paths are no longer exposed to the put. The probability of a capital loss falls from 5.22\% to
+1.70\% and the fair coupon to 8.86\%. The duo is a compromise between a step-down and a lower autocall barrier: with
+a coupon ratio of 100\%, it would be exactly an autocall barrier at 90\% (fair coupon 6.66\%,
+Table~\ref{tab:athena-sensi-autocall}).
 
 \clearpage
 \subsubsection{Look back}
 
+With a look back, the reference level $\Sref$ is not the initial fixing but the minimum of the index over the first
+month (a lookback on the average gives an Asian fixing). Every barrier is then a fraction of a lower reference level
+on the paths where the index fell during the first month.
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Look back min 1m} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Look back & -- & min over 1 month \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 98.75 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.10 \\
+      & Fair coupon (\% p.a.) & 10.54 & 9.08 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 9.03 \\
+      & Probability of a capital loss (\%) & 5.22 & 3.57 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 2.09 \\
+      & Expected life (years) & 1.03 & 0.78 \\
+      & Expected number of coupons & 0.87 & 0.91 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 2.51 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Look back: the reference level is the minimum of the index over the first month.}
+  \label{tab:athena-lookback}
+\end{table}
 
+The investor gets the best entry point of the first month: the barriers are lower on the paths that fell, so the
+note is called more often (probability to reach maturity 9.03\% instead of 13.29\%) and the capital is lost less often
+(3.57\% instead of 5.22\%). The note is worth more to the investor and the fair coupon falls to 9.08\%. The look back
+is the cheapest way to protect an investor against a bad timing of the issue.
 
+\clearpage
+\subsubsection{Protection type}
 
+The protection can also be American: the capital is at risk as soon as the index touches 60\% at any time before
+maturity, and not only at maturity. The barrier is monitored continuously (Brownian bridge on the weekly grid) or on
+daily closes (daily grid).
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{American} & \textbf{American (daily)} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Protection type & European & Continuous & Daily closes \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 96.83 & 96.92 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.12 & 0.12 \\
+      & Fair coupon (\% p.a.) & 10.54 & 12.53 & 12.31 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 & 13.23 \\
+      & Probability of a capital loss (\%) & 5.22 & 9.22 & 8.98 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 4.11 & 4.06 \\
+      & Expected life (years) & 1.03 & 1.03 & 1.03 \\
+      & Expected number of coupons & 0.87 & 0.87 & 0.87 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 3.01 & 3.01 \\
+    \bottomrule
+  \end{tabular}
+  \caption{American protection at 60\%, observed continuously (Brownian bridge) or on daily closes.}
+  \label{tab:athena-american}
+\end{table}
 
+A note whose index touched 60\% and then recovered is still knocked-in: the probability of a capital loss rises from
+5.22\% to 9.22\% (continuous monitoring), and the fair coupon from 10.54\% to 12.53\%. The American protection is the
+most expensive feature for the investor: two points of coupon. A daily monitoring misses the crossings between two
+closes and is slightly cheaper for the investor (fair coupon 12.31\%).
 
+\clearpage
+\subsubsection{Non-call period}
 
+During a non-call period, the note cannot be called. With a non-call period of one year, the first callable date is
+$t = 1$ instead of $t = 0.25$.
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Non-call 1 year} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & First call date (years) & 0.25 & 1 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 97.15 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.12 \\
+      & Fair coupon (\% p.a.) & 10.54 & 8.94 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 22.06 \\
+      & Probability of a capital loss (\%) & 5.22 & 8.42 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 4.92 \\
+      & Expected life (years) & 1.03 & 1.89 \\
+      & Expected number of coupons & 0.87 & 0.78 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 6.02 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Non-call period of one year, all other parameters being those of the base case.}
+  \label{tab:athena-noncall}
+\end{table}
 
+The paths that were called at the first three dates in the base case now have to wait one year, and some of them fall
+in the meantime: the probability to reach maturity rises from 13.29\% to 22.06\% and the probability of a loss from
+5.22\% to 8.42\%. Yet the fair coupon falls from 10.54\% to 8.94\%: since the coupon is a snowball, a note called after
+one year pays at least $c$, while most notes of the base case were called after three months with $c/4$. The coupon
+paid is twice as large on average (6.02\% instead of 3.01\%).
 
+\clearpage
+\subsubsection{Coupon type}
 
+Finally, the coupon can be fixed instead of snowball: a call at $t_k$ pays $c\,(t_k - t_{k-1}) = c/4$, whatever the
+call date.
 
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Fixed coupon} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Coupon type & Snowball & Fixed \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 97.80 & 96.16 \\
+      & 95\% confidence interval ($\pm$) & 0.11 & 0.10 \\
+      & Fair coupon (\% p.a.) & 10.54 & 23.94 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 3.05 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 0.87 & 0.87 \\
+      & Expected coupon paid (\% nominal) & 3.01 & 1.30 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Fixed coupon: a call at $t_k$ pays $c\,(t_k - t_{k-1})$ instead of $c\,t_k$.}
+  \label{tab:athena-fixed}
+\end{table}
 
+The scenarios are the same, but the coupon does not accumulate anymore: a note called after two years pays $c/4$
+instead of $2c$. The coupon paid falls from 3.01\% to 1.30\% of the nominal, and the fair coupon per annum jumps to
+23.94\%. Quoted per annum, a fixed-coupon Athena looks very attractive, but it pays its coupon only once.
 
-
-
-
-
-
-
-
-
-
-\begin{figure}[h]
-\centering
-\begin{tikzpicture}
-\begin{axis}[width=0.55\textwidth, height=0.36\textwidth, ymin=0, ymax=65, ylabel={Call probability (\%)},
-  grid=major, grid style={gray!20}, title style={font=\small}, ybar, bar width=14pt,
-  xlabel={Observation date (years)}, xtick={1,2,3,4}, title={Athena, annual (maturity: 25.7\%)},
-  nodes near coords, every node near coord/.append style={font=\tiny}]
-\addplot[fill=athena!70, draw=athena] coordinates {(1,55.69) (2,10.83) (3,4.81) (4,2.96)};
-\end{axis}
-\end{tikzpicture}
-\caption{Base Athena: probability of being called at each observation date (autocall barrier at 100\%).}
-\label{fig:call_probabilities}
-\end{figure}
-
-\begin{figure}[h]
-\centering
-\figfile{athena_scenarios.png}{0.9\textwidth}
-\caption{Base Athena: simulated paths of the performance, grouped by outcome.}
-\label{fig:athena_scenarios}
-\end{figure}
-
+\clearpage
 \subsection{All the forms of the Athena}
-Table~\ref{tab:athena_variants} changes one feature of the base case at a time. All prices are computed at
-the same coupon of 8\% (standard errors between 0.03 and 0.08); the fair coupon is the comparable quantity.
 
-\begin{table}[h]
+Table~\ref{tab:athena_variants} gathers all the variants of this section, sorted by fair coupon, and
+Figure~\ref{fig:fair_coupons} draws their fair coupons.
+
+\begin{table}[htbp]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{@{}lrrrrrrr@{}}
 \toprule
-\textbf{Variant} & \textbf{Price at 8\%} & \textbf{Fair coupon} & \textbf{P(call $t_1$)} & \textbf{P(maturity)} & \textbf{P(loss)} & \textbf{E[loss]} & \textbf{E[life]} \\
- & & \textbf{(\% p.a.)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(y)} \\
+\textbf{Variant} & \textbf{Price at 6\%} & \textbf{Fair coupon} & \textbf{P(maturity)} & \textbf{P(loss)} & \textbf{E[loss]} & \textbf{E[life]} & \textbf{E[coupon]} \\
+ & & \textbf{(\% p.a.)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(\% nom.)} & \textbf{(y)} & \textbf{(\% nom.)} \\
 \midrule
-Base (annual, snowball, AC 100\%, EU 60\%) & 98.60 & 9.41 & 55.69 & 25.70 & 9.06 & 5.27 & 2.06 \\
-Semi-annual observations & 98.64 & 9.93 & 53.30 & 18.61 & 6.97 & 4.08 & 1.48 \\
-Quarterly observations & 98.77 & 10.54 & 55.43 & 13.29 & 5.22 & 3.05 & 1.03 \\
-Monthly observations & 99.16 & 11.11 & 56.21 & 7.77 & 3.13 & 1.83 & 0.59 \\
-Fixed coupon (no snowball) & 96.40 & 13.00 & 55.69 & 25.70 & 9.06 & 5.27 & 2.06 \\
-Autocall barrier 90\% & 100.95 & 7.03 & 77.37 & 13.24 & 6.41 & 3.77 & 1.54 \\
-Autocall barrier 110\% & 95.40 & 12.71 & 25.07 & 45.60 & 11.77 & 6.77 & 2.85 \\
-Step-down 5\% per year & 100.65 & 7.46 & 55.69 & 17.56 & 8.57 & 5.01 & 1.95 \\
-Quarterly, non-call 1 year & 99.09 & 8.94 & 0.00 & 22.06 & 8.42 & 4.92 & 1.89 \\
-Protection 50\% & 99.90 & 8.10 & 55.69 & 25.70 & 5.91 & 3.86 & 2.06 \\
-Protection 70\% & 97.33 & 10.68 & 55.69 & 25.70 & 12.96 & 6.63 & 2.06 \\
-American protection (continuous) & 96.83 & 11.18 & 55.69 & 25.70 & 16.43 & 7.20 & 2.06 \\
-American protection (daily) & 96.95 & 11.05 & 55.53 & 25.67 & 16.07 & 7.18 & 2.07 \\
-Airbag & 100.89 & 7.10 & 55.69 & 25.70 & 9.06 & 2.75 & 2.06 \\
-Capital guaranteed 90\% & 102.56 & 5.42 & 55.69 & 25.70 & 9.06 & 0.91 & 2.06 \\
-Capital guaranteed 100\% & 103.39 & 4.59 & 55.69 & 25.70 & 0.00 & 0.00 & 2.06 \\
-Buffer\\
+Guaranteed 100\% & 100.57 & 4.83 & 13.29 & 0.00 & 0.00 & 1.03 & 3.01 \\
+Guaranteed 90\% & 100.09 & 5.81 & 13.29 & 5.22 & 0.52 & 1.03 & 3.01 \\
+Airbag & 99.11 & 7.83 & 13.29 & 5.22 & 1.61 & 1.03 & 3.01 \\
+Step-down 1\% & 98.81 & 8.24 & 8.12 & 4.44 & 2.62 & 0.87 & 3.29 \\
+Duo 90\% / 50\% & 99.37 & 8.86 & 3.13 & 1.70 & 1.01 & 0.42 & 1.33 \\
+Non-call 1 year & 97.15 & 8.94 & 22.06 & 8.42 & 4.92 & 1.89 & 6.02 \\
+Look back min 1m & 98.75 & 9.08 & 9.03 & 3.57 & 2.09 & 0.78 & 2.51 \\
+Annual observation & 96.61 & 9.41 & 25.70 & 9.06 & 5.27 & 2.06 & 6.22 \\
+Semi-annual observation & 97.22 & 9.93 & 18.61 & 6.97 & 4.08 & 1.48 & 4.39 \\
+\textbf{Base case} & 97.80 & 10.54 & 13.29 & 5.22 & 3.05 & 1.03 & 3.01 \\
+Range accrual 80-120\% & 97.68 & 10.99 & 13.29 & 5.22 & 3.05 & 1.03 & 2.88 \\
+Monthly observation & 98.62 & 11.11 & 7.77 & 3.13 & 1.83 & 0.59 & 1.66 \\
+Buffer 10\% & 97.37 & 11.42 & 13.29 & 11.81 & 3.50 & 1.03 & 3.01 \\
+Daily observation & 99.65 & 11.74 & 1.80 & 0.78 & 0.46 & 0.13 & 0.38 \\
+American protection (daily) & 96.92 & 12.31 & 13.23 & 8.98 & 4.06 & 1.03 & 3.01 \\
+American protection & 96.83 & 12.53 & 13.29 & 9.22 & 4.11 & 1.03 & 3.01 \\
+Autocall 110\% & 94.33 & 12.69 & 37.56 & 10.48 & 6.04 & 2.39 & 5.33 \\
+Protection 80\% & 96.60 & 13.00 & 13.29 & 9.57 & 4.34 & 1.03 & 3.01 \\
+Fixed coupon & 96.16 & 23.94 & 13.29 & 5.22 & 3.05 & 1.03 & 1.30 \\
 \bottomrule
 \end{tabular}}
-\caption{Athena variants on the CAC40 (Heston, 50{,}000 paths). E[loss] in \% of the nominal.}
+\caption{All the Athena variants of this section, sorted by fair coupon (Heston, 50{,}000 paths, coupon 6\% p.a.). Each variant changes one feature of the base case.}
 \label{tab:athena_variants}
 \end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{fair_coupons.png}{0.9\textwidth}
+\caption{Fair coupon of each variant (the base case in red).}
+\label{fig:fair_coupons}
+\end{figure}
 
 \paragraph{Reading the table.} The investor is short a down-and-in put whose premium is paid back through the
 coupons; the fair coupon per annum is roughly this premium divided by the expected life of the note.
 \begin{itemize}
-\item \emph{Observation frequency.} More frequent observations call the note earlier (expected life from 2.06 to
-0.59 years) and reduce the probability of a loss (from 9.06\% to 3.13\%), but the put premium is spread over a much
-shorter life: the fair coupon rises from 9.41\% to 11.11\%.
-\item \emph{Snowball vs fixed coupon.} A fixed coupon pays $c$ once whatever the call date, instead of $c\,t_k$:
-the fair coupon is 13.00\% instead of 9.41\%.
-\item \emph{Autocall barrier.} A barrier at 90\% calls 77\% of the notes after one year and lowers the fair coupon
-to 7.03\%; at 110\%, 46\% of the notes reach maturity and the fair coupon is 12.71\%. A step-down of 5\% a year
-lowers it to 7.46\%.
-\item \emph{Protection.} Each 5 points of protection barrier move the fair coupon by 0.4 to 0.7 point
-(Figure~\ref{fig:fair_coupon}). The American protection raises the probability of a loss from 9.06\% to 16.43\% and
-the fair coupon by 1.77 points; a daily monitoring lowers the fair coupon by 0.13 point with respect to a continuous
-monitoring.
-\item \emph{Airbag and guarantee.} The airbag halves the expected loss (2.75\% instead of 5.27\%) for a coupon of
-7.10\%; a 100\% capital guarantee leaves a coupon of 4.59\%, the value of the call-at-par feature on top of a
-zero-coupon bond.
+\item \emph{Capital protection.} The guarantee (4.83\% at 100\%, 5.81\% at 90\%) and the airbag (7.83\%) reduce the
+loss without changing the scenarios; the American protection (12.53\%), a higher barrier (13.00\% at 80\%) and the
+buffer (11.42\%) make the loss more likely.
+\item \emph{Call mechanism.} The features that make the call easier at a given coupon (step-down 8.24\%, duo 8.86\%,
+look back 9.08\%) are more valuable for the investor; a higher autocall barrier is the opposite (12.69\% at 110\%).
+\item \emph{Timing of the coupon.} Because the coupon is a snowball, everything that shortens the life of the note
+raises the coupon rate needed: more frequent observations (from 9.41\% annual to 11.74\% daily) and, conversely, a
+non-call period lowers it (8.94\%). A fixed coupon, paid once, needs 23.94\% a year.
 \end{itemize}
 
 \begin{figure}[h]
 \centering
-\begin{tikzpicture}
-\begin{groupplot}[group style={group size=2 by 1, horizontal sep=1.6cm},
-  width=0.46\textwidth, height=0.34\textwidth, ylabel={Fair coupon (\% p.a.)}, grid=major, grid style={gray!20},
-  title style={font=\small}, legend style={font=\scriptsize, at={(0.03,0.97)}, anchor=north west}, ticklabel style={font=\scriptsize}]
-\nextgroupplot[xlabel={Protection barrier (\%)}, title={Protection barrier}]
-\addplot[athena, thick, mark=*, mark size=1.2pt] coordinates {(40,6.86) (45,7.46) (50,8.10) (55,8.78) (60,9.41) (65,10.05) (70,10.68) (75,11.19) (80,11.71) (85,12.08)};
-\addplot[athena, thick, dashed, mark=o, mark size=1.2pt] coordinates {(40,8.22) (45,8.99) (50,9.78) (55,10.51) (60,11.18) (65,11.73) (70,12.13) (75,12.37) (80,12.48) (85,12.51)};
-\legend{European, American}
-\nextgroupplot[xlabel={Autocall barrier (\%)}, title={Autocall barrier}]
-\addplot[athena, thick, mark=*, mark size=1.2pt] coordinates {(80,5.33) (85,6.07) (90,7.03) (95,8.11) (100,9.41) (105,10.95) (110,12.71) (115,14.90)};
-\end{groupplot}
-\end{tikzpicture}
-\caption{Athena: fair coupon as a function of the barriers (other features of the base case unchanged; American:
-continuous monitoring).}
-\label{fig:fair_coupon}
+\figfile{redemption_profiles.png}{0.8\textwidth}
+\caption{Redemption at maturity of a note never called: standard, airbag, buffer and capital guaranteed at 90\%.}
+\label{fig:redemption_profiles}
 \end{figure}
 
+\begin{figure}[h]
+\centering
+\figfile{call_probabilities_features.png}{0.9\textwidth}
+\caption{Probability of a call at each observation date: base case, step-down, duo and autocall barrier at 110\%.}
+\label{fig:call_probabilities_features}
+\end{figure}
+
+\clearpage
 \subsection{Greeks}
-Table~\ref{tab:athena_greeks} gives the Greeks of five Athena variants. Gamma and Volga are not significant at
-this number of paths (base case: Gamma $-3.0 \times 10^{-6} \pm 5.4 \times 10^{-6}$, Volga $-0.042 \pm 0.037$);
-the other Greeks have relative standard errors between 3\% and 45\% (base case: Delta $0.00506 \pm 0.00019$, Vega
-$-0.549 \pm 0.016$, Rho $-0.77 \pm 0.07$, Dividend $-1.12 \pm 0.07$, Theta $0.0050 \pm 0.0016$).
+Table~\ref{tab:athena_greeks} gives the Greeks of five Athena variants (nominal 100, coupon 6\%). Gamma and Volga
+are not significant at this number of paths (base case: Gamma $-8.6 \times 10^{-6} \pm 5.1 \times 10^{-6}$, Volga
+$-0.022 \pm 0.028$); the other Greeks of the base case have relative standard errors between 4\% and 35\% (Delta
+$0.00470 \pm 0.00020$, Vega $-0.315 \pm 0.013$, Rho $-0.210 \pm 0.054$, Dividend $-0.689 \pm 0.054$, Theta
+$0.0048 \pm 0.0017$).
 
 \begin{table}[h]
 \centering
@@ -920,25 +1426,25 @@ $-0.549 \pm 0.016$, Rho $-0.77 \pm 0.07$, Dividend $-1.12 \pm 0.07$, Theta $0.00
 \textbf{Athena} & \textbf{Price} & \textbf{Delta} & \textbf{Delta 1\%} & \textbf{Vega} & \textbf{Vanna} & \textbf{Rho} & \textbf{Dividend} & \textbf{Theta} \\
  & & (per point) & (per 1\% move) & (per vol pt) & ($\times 10^{4}$) & (per 1\%) & (per 1\%) & (per day) \\
 \midrule
-Base & 98.60 & 0.00506 & 0.407 & $-0.549$ & 2.51 & $-0.770$ & $-1.115$ & 0.0050 \\
-American protection & 96.83 & 0.00644 & 0.518 & $-0.657$ & 1.97 & $-0.546$ & $-1.269$ & 0.0050 \\
-Step-down 5\% & 100.65 & 0.00321 & 0.258 & $-0.637$ & 6.36 & $-0.900$ & $-0.935$ & 0.0079 \\
-Airbag & 100.89 & 0.00343 & 0.276 & $-0.354$ & 1.28 & $-1.161$ & $-0.815$ & 0.0037 \\
-Guaranteed 90\% & 102.56 & 0.00241 & 0.193 & $-0.139$ & 0.44 & $-1.436$ & $-0.608$ & 0.0023 \\
+Base case & 97.80 & 0.00470 & 0.378 & $-0.315$ & 2.45 & $-0.210$ & $-0.689$ & 0.0048 \\
+American protection & 96.83 & 0.00640 & 0.515 & $-0.375$ & 2.04 & $-0.058$ & $-0.801$ & 0.0037 \\
+Step-down 1\% & 98.81 & 0.00225 & 0.181 & $-0.299$ & 2.86 & $-0.421$ & $-0.354$ & 0.0040 \\
+Airbag & 99.11 & 0.00260 & 0.209 & $-0.205$ & 1.70 & $-0.486$ & $-0.465$ & 0.0024 \\
+Guaranteed 90\% & 100.09 & 0.00114 & 0.091 & $-0.066$ & 0.69 & $-0.683$ & $-0.307$ & 0.0019 \\
 \bottomrule
 \end{tabular}}
-\caption{Greeks of Athena variants (nominal 100, coupon 8\%).}
+\caption{Greeks of Athena variants (nominal 100, coupon 6\%).}
 \label{tab:athena_greeks}
 \end{table}
 
-The note is long the index (a 1\% rise is worth 0.41 on 100) and short volatility: one vol point costs 0.55, the
+The note is long the index (a 1\% rise is worth 0.38 on 100) and short volatility: one vol point costs 0.32, the
 short put dominating the long digital-like call features. It is also short dividends: one point of carry lowers
-every forward and costs 1.12, twice the vega. It loses with higher rates (discounting of the coupons and of the
-nominal) and earns about 0.005 a day (1.8 a year) as the put decays. The capital guarantee reduces every risk but
-the rate risk, since the guaranteed redemption behaves as a zero-coupon bond. Figure~\ref{fig:athena_greeks}
-displays the table with 95\% confidence intervals and Figure~\ref{fig:athena_profiles} the Greeks as functions of
-the spot, the initial fixing staying at 8042: the Delta increases as the spot falls towards the protection barrier
-(4825), and peaks just above it with an American protection.
+every forward and costs 0.69, twice the vega. It loses with higher rates (discounting of the coupons and of the
+nominal) and earns about 0.005 a day (1.7 a year) as the put decays. The American protection increases the delta and
+the vega of the note, since the knock-in can happen at any time, and brings the rho close to zero: higher rates
+raise the forwards and make the barrier less likely to be touched, which offsets the discounting. The step-down,
+the airbag and the capital guarantee reduce every risk but the rate risk, the guaranteed redemption behaving as a
+zero-coupon bond (rho $-0.683$). Figure~\ref{fig:athena_greeks} displays the table with 95\% confidence intervals.
 
 \begin{figure}[h]
 \centering
@@ -947,17 +1453,12 @@ the spot, the initial fixing staying at 8042: the Delta increases as the spot fa
 \label{fig:athena_greeks}
 \end{figure}
 
-\begin{figure}[h]
-\centering
-\figfile{athena_profiles.png}{\textwidth}
-\caption{Athena: price and Greeks as functions of the spot (30{,}000 paths, spot step 400).}
-\label{fig:athena_profiles}
-\end{figure}
-
-\paragraph{Sensitivities to the Heston parameters.} Per unit of parameter, the base Athena has
-$\partial V/\partial v_0 = -69.9$, $\partial V/\partial \theta = -69.4$, $\partial V/\partial \kappa = -0.81$,
-$\partial V/\partial \xi = 3.94$ and $\partial V/\partial \rho = -1.03$. The note loses with the variance level
-(short put) and gains with the vol-of-vol $\xi$.
+\paragraph{Sensitivities to the Heston parameters.} Per unit of parameter, the base case has
+$\partial V/\partial v_0 = -61.7 \pm 14.2$, $\partial V/\partial \theta = -18.6 \pm 9.0$,
+$\partial V/\partial \xi = 2.9 \pm 1.2$, while $\partial V/\partial \kappa = 0.11 \pm 0.26$ and
+$\partial V/\partial \rho = -1.1 \pm 0.8$ are not significant. The note loses with the variance level (short put),
+mostly through the initial variance $v_0$ since most notes are called within a year, and gains slightly with the
+vol-of-vol $\xi$. The insensitivity to $\rho$ is the one found in the skew scenarios above.
 
 % ==================================================================
 \section{Implementation}\label{sec:implementation}
@@ -966,7 +1467,8 @@ $\partial V/\partial \xi = 3.94$ and $\partial V/\partial \rho = -1.03$. The not
 \subsection{Code}
 \begin{itemize}
 \item \code{Products/Athena/athena.py}: the self-contained class \code{Athena} (contract, \code{path\_payoff},
-\code{fair\_coupon}, \code{statistics});
+\code{fair\_coupon}, \code{statistics}, and \code{features} / \code{report} for one table with the terms, the
+pricing and the scenarios);
 \item \code{Equity\_Models/monte\_carlo.py}: \code{MonteCarloPricer}, which simulates the paths and calls
 \code{path\_payoff} for products with several cash flows;
 \item \code{Equity\_Models/Heston.py}, \code{Equity\_Models/forward\_curve.py}: calibrated model and forward curve;
@@ -974,7 +1476,8 @@ $\partial V/\partial \xi = 3.94$ and $\partial V/\partial \rho = -1.03$. The not
 \item \code{Products/market.py}: CAC40 market data and calibrated Heston model (\code{cac40\_heston});
 \item \code{Products/notes\_analysis.py}: comparison of variants and plots;
 \item notebooks \code{Products/Athena/athena\_pricer.ipynb} and\\
-\code{Products/Athena/athena\_synthetic\_pricing.ipynb}.
+\code{Products/Athena/athena\_synthetic\_pricing.ipynb} (every number of Section~\ref{sec:athena});
+\item \code{Reports/Athena/make\_figures.py}: extracts the figures of this report from the executed notebook.
 \end{itemize}
 
 \begin{lstlisting}
@@ -985,11 +1488,11 @@ from Equity_Models.greeks import Greeks
 
 mkt = cac40_heston()
 pricer = MonteCarloPricer(n_paths=50_000, steps_per_year=52, seed=42)
-note = Athena(4.0, mkt.S0, 0.08, coupon_type="snowball", frequency=1.0,
+note = Athena(4.0, mkt.S0, 0.06, coupon_type="snowball", frequency=0.25,
               autocall_barrier=1.0, protection_barrier=0.6, protection_type="european")
 print(pricer.price(mkt.heston, note))              # price and standard error
 print(note.fair_coupon(pricer, mkt.heston))        # coupon p.a. at par
-print(note.statistics(pricer, mkt.heston))         # call probabilities, loss, life, coupon
+print(note.report(pricer, mkt.heston))             # terms, pricing and scenario statistics
 print(Greeks(pricer).compute(mkt.heston, note, Greeks.ORDER))
 \end{lstlisting}
 
@@ -997,10 +1500,10 @@ print(Greeks(pricer).compute(mkt.heston, note, Greeks.ORDER))
 With $N$ paths and $M$ steps, the simulation costs $\mathcal{O}(NM)$ in time and stores $S$ and $v$, i.e.
 $16(M+1)N$ bytes: 167 MB for $N = 50{,}000$ and the weekly grid of 4 years, 807 MB on a daily grid. Following the
 note through its $n$ observation dates costs $\mathcal{O}(nN)$, the American continuous protection
-$\mathcal{O}(NM)$. Measured times (one CPU core): 0.30 s for a valuation including the simulation; 0.02 to 0.12 s
-for the price, the fair coupon and the statistics of a variant on cached paths (1.5 s with an American
-protection); 26 s for the eight Greeks of five notes (14 valuations each); 41 to 44 s for the spot profiles of
-four notes (16 spots $\times$ 6 scenarios, 30{,}000 paths).
+$\mathcal{O}(NM)$. Measured times (one CPU core): about 0.3 s for a valuation including the simulation, and a few hundredths of
+a second for the price, the fair coupon and the statistics of a variant on cached paths. The whole notebook
+\code{athena\_synthetic\_pricing.ipynb} (calibration, 19 variants, 6 market sweeps, the Greeks of five notes and a
+spot profile) runs in about 1.5 minutes.
 
 % ==================================================================
 \section{Limitations and Next Steps}\label{sec:limitations}
@@ -1011,8 +1514,8 @@ a multi-asset model and a correlation calibration.
 \item \emph{Model.} The value of an autocall depends on the forward skew and on the joint dynamics of spot and
 volatility between observation dates; a pure Heston model with constant parameters is not the market standard,
 which is a local stochastic volatility model calibrated to the whole surface \cite{bergomi2016}.
-\item \emph{Fair coupon.} It prices the note at par without issuer margin, funding spread or issuer credit risk; a
-real issue price is below par by the margin.
+\item \emph{Fair coupon.} It prices the note at par without issuer margin; the credit spread of the issuer is only
+studied as a parallel discounting spread, without default modelling. A real issue price is below par by the margin.
 \item \emph{Discretisation.} Euler full truncation with the Feller condition violated ($2\kappa\theta/\xi^2 = 0.49$),
 weekly grid with the variance frozen over each week for the Brownian bridge.
 \item \emph{Greeks.} Gamma and Volga are not significant with 50{,}000 paths: the payoff jumps at the autocall and
@@ -1026,10 +1529,15 @@ discrete dividends and to dividend risk, which the Dividend Greek only measures 
 % ==================================================================
 A single parametrisation covers the Athena with all its usual features, and a Monte Carlo pricer under a
 calibrated Heston model recovers three exact limit cases within one standard error. On the CAC40 of
-12 February 2025, the base 4-year Athena pays 9.41\% a year; the protection type is the most expensive feature for
-the investor (1.77 point of coupon for an American protection); more frequent observations raise the fair coupon,
-and a step-down of the autocall barrier lowers it. The note is short volatility and short dividends, the dividend
-exposure being twice the vega.
+12 February 2025, the base 4-year quarterly Athena has a fair coupon of 10.54\% a year. Its value is driven by the
+down-and-in put sold by the investor and by the short expected life of the note (1.03 years): everything that makes
+the loss more likely raises the coupon (protection barrier, American protection, buffer, volatility, dividends),
+everything that removes the loss lowers it (airbag, capital guarantee), and, because the coupon is a snowball, the
+features that shorten the life of the note (more frequent observations) raise the coupon rate needed while a
+non-call period lowers it. The rates and the issuer spread raise the coupon through the funding benefit of the
+issuer, and the skew has almost no effect on the price, its effects on the put and on the call offsetting each
+other. The note is short volatility and short dividends, the dividend exposure being twice the vega; the hedge of
+the issuer is dominated by the delta, which triples when the index falls towards the protection barrier.
 
 % ==================================================================
 \appendix
@@ -1045,7 +1553,7 @@ $t_k$, $\delta_k = t_k - t_{k-1}$ & Observation dates and accrual periods \\
 $P_k = S_{t_k}/\Sref$ & Performance at $t_k$ \\
 $B^{\mathrm{call}}_k$, $B^{\mathrm{prot}}$ & Autocall and protection barriers (fractions of $\Sref$) \\
 $c$, $c^\star$ & Coupon rate per annum, fair coupon \\
-$K_{\mathrm{put}}$, $\phi$ & Strike of the short put, capital floor \\
+$K_{\mathrm{put}}$, $\phi$, $b$ & Strike of the short put, capital floor, buffer \\
 $\tau$ & Call date \\
 $\ind_{\mathrm{KI}}$ & Knock-in event of the protection \\
 \bottomrule

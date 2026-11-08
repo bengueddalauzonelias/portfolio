@@ -13,6 +13,9 @@
 \usepackage{xcolor}
 \usepackage{listings}
 \usepackage{caption}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage[section]{placeins}
 \usepackage{pgfplots}
 \usepgfplotslibrary{groupplots}
 \pgfplotsset{compat=1.17}
@@ -58,15 +61,17 @@ is above a coupon barrier, with or without memory of the missed coupons, on the 
 underlying follows a Heston model calibrated to the implied volatility surface (RMSE 0.42 volatility point), with a
 drift read from a forward curve bootstrapped from put--call parity. The note is described by a single
 parametrisation covering the observation frequency, coupon barrier and memory, autocall barrier and step-down,
-non-call period, European, American continuous or American daily capital protection, airbag and capital guarantee.
-The notes are priced by Monte Carlo with antithetic variates and a control variate; the American protection is
-handled with the Brownian bridge crossing probability as a conditional expectation. The pricer recovers two
-closed-form limit cases and an exact identity with the snowball Athena. We report the fair coupon (price at par) of
-19 variants together with their scenario statistics: the base Phoenix (4 years, quarterly observations, memory,
-coupon barrier at 70\%, autocall at 100\%, European protection at 60\%) pays 6.04\% a year, is called after one
-quarter with probability 55.4\% and loses capital with probability 5.2\%. The memory is worth 0.37 point of coupon
-and an American protection costs 1.14 points. The note is almost Delta-neutral at the money, short volatility
-($-0.33$ per vol point on a nominal of 100) and short dividends ($-0.32$ per point of carry).
+non-call period, European, American continuous or American daily capital protection, airbag, buffer, capital
+guarantee, range accrual coupon, duo call mechanism and look back. The notes are priced by Monte Carlo with
+antithetic variates and a control variate; the pricer recovers two closed-form limit cases and an exact identity with
+the snowball Athena. The base Phoenix (4 years, quarterly observations, memory, coupon barrier at 70\%, autocall at
+100\%, European protection at 60\%) has a fair coupon of 6.04\% a year, against 10.54\% for the Athena with the same
+dates: a unit coupon is worth 1.75 times more, since it is also paid when the index stays between 70\% and 100\%. We
+report its sensitivities to the barriers and to the market, its hedge, and the fair coupon of 20 variants. Contrary
+to the Athena, everything that shortens the life of the note (step-down, duo, a lower autocall barrier) raises the
+fair coupon, and the investor is short skew. The note is almost delta-neutral at the money, short volatility
+($-0.33$ per vol point on a nominal of 100), short dividends ($-0.32$ per point of carry) and three times more
+exposed to the rates than the Athena.
 \end{abstract}
 
 \clearpage
@@ -86,7 +91,7 @@ coupon barrier, lower than the autocall barrier, usually with a \emph{memory} of
 family, the Athena, whose coupon is paid only when the note is called, is treated in a companion report
 \cite{benguedda2026athena}.
 On top of this structure, issuers combine many features: observation frequency, step-down of the autocall barrier,
-non-call period, European or American protection, airbag, capital guarantee. We will have a look on how to price
+non-call period, European or American protection, airbag, buffer, capital guarantee, range accrual coupon, duo call mechanism, look back. We will have a look on how to price
 these different versions in a single framework, on real market data, and measure how each feature moves the fair
 coupon, the probabilities of the scenarios and the Greeks.
 
@@ -107,10 +112,10 @@ $P_k \ge B^{\mathrm{call}}_k$ is the call date $\tau$.
 
 \paragraph{Redemption at maturity.} If the note is never called, it is redeemed at $T$ at
 \begin{equation}\label{eq:redemption}
-R_T = N\left[(1 - \ind_{\mathrm{KI}}) + \ind_{\mathrm{KI}}\,\max\!\Big(\phi,\ \min\big(1,\ P_T/K_{\mathrm{put}}\big)\Big)\right],
+R_T = N\left[(1 - \ind_{\mathrm{KI}}) + \ind_{\mathrm{KI}}\,\max\!\Big(\phi,\ \min\big(1,\ P_T/K_{\mathrm{put}} + b\big)\Big)\right],
 \end{equation}
 where $\ind_{\mathrm{KI}}$ is the knock-in event of the protection, $K_{\mathrm{put}}$ the strike of the short put
-and $\phi$ the capital floor. The knock-in event is
+$\phi$ the capital floor and $b$ the buffer ($b = 0$ by default). The knock-in event is
 \begin{itemize}
 \item \emph{European protection}: $P_T < B^{\mathrm{prot}}$;
 \item \emph{American protection}: the index touches $B^{\mathrm{prot}}\Sref$ at any time before maturity,
@@ -119,7 +124,7 @@ continuously or on daily closes.
 The standard note has $K_{\mathrm{put}} = 1$ and $\phi = 0$: below the barrier, the investor receives
 $N P_T$ and the redemption jumps from $N$ to $N B^{\mathrm{prot}}$ at the barrier. The \emph{airbag} note has
 $K_{\mathrm{put}} = B^{\mathrm{prot}}$: the redemption is continuous at the barrier and equal to
-$N P_T / B^{\mathrm{prot}}$ below it. A \emph{capital guarantee} sets $\phi > 0$. Figure~\ref{fig:redemption}
+$N P_T / B^{\mathrm{prot}}$ below it. A \emph{capital guarantee} sets $\phi > 0$. A \emph{buffer} sets $b > 0$ with $B^{\mathrm{prot}} = 1 - b$: the investor only loses below $1 - b$, one for one, without loss jump. Figure~\ref{fig:redemption}
 draws the three profiles.
 
 \begin{figure}[h]
@@ -152,6 +157,17 @@ redeemed at $N$. With $B^{\mathrm{cpn}}_k = 0$, the coupon is unconditional; wit
 $B^{\mathrm{cpn}}_k = B^{\mathrm{call}}_k$ and memory, a coupon is paid only at the call date and its amount is
 $c\, t_k$: the Phoenix is then exactly a snowball Athena (Table~\ref{tab:validation} checks it numerically).
 
+\paragraph{Optional features.} Three features change the call or the coupon:
+\begin{itemize}
+\item \emph{range accrual}: the coupon of each period only accrues on the dates of the period where
+$L \le S_t/\Sref \le U$; it is still paid only if $P_k \ge B^{\mathrm{cpn}}_k$;
+\item \emph{duo}: a second call level $B^{\mathrm{duo}}_k < B^{\mathrm{call}}_k$; if
+$B^{\mathrm{duo}}_k \le P_k < B^{\mathrm{call}}_k$, the note is called and the coupon of the date is multiplied by
+$\alpha$;
+\item \emph{look back}: $\Sref$ is the minimum (or the average) of the index over $[0, t_{\mathrm{lb}}]$, path by path,
+instead of the initial fixing, all the barriers being fractions of this reference.
+\end{itemize}
+
 \subsection{Parametrisation}
 Table~\ref{tab:parameters} lists the parameters of the class \code{Phoenix}; every variant of
 Section~\ref{sec:phoenix} is one of these parameters changed.
@@ -171,6 +187,10 @@ Autocall barrier & \code{autocall\_barrier}, \code{step\_down} & fraction of $\S
 Non-call period & \code{first\_call\_date} & years \\
 Capital protection & \code{protection\_barrier}, \code{protection\_type} & fraction of $\Sref$; \code{european}, \code{american}, \code{american\_discrete} \\
 Airbag, guarantee & \code{put\_strike}, \code{floor} & fraction of $\Sref$, fraction of the nominal \\
+Buffer & \code{buffer} & fraction of $\Sref$, with \code{protection\_barrier} $= 1 - b$ \\
+Range accrual & \code{accrual\_range} & $(L, U)$, fractions of $\Sref$ \\
+Duo & \code{duo\_barrier}, \code{duo\_coupon\_ratio} & fraction of $\Sref$, fraction $\alpha$ of the coupon \\
+Look back & \code{lookback}, \code{lookback\_type} & years, \code{min} or \code{average} \\
 \bottomrule
 \end{tabular}}
 \caption{Parameters of the Phoenix (\code{Products/Phoenix/phoenix.py}).}
@@ -462,9 +482,11 @@ effect on the coupon $c$ is that it is increased: 5.16\% at 50\%, 6.04\% at 60\%
 \subsection*{Recall Barrier}
 
 If the recall barrier is increased, it is less probable to be recalled before maturity: the investor keeps the put
-longer, and the fair coupon $c$ increases (5.46\% with an autocall barrier at 90\%, 6.04\% at 100\%). Contrary to
-the Athena, a longer life also means more coupons, which limits the effect; a step-down of the autocall barrier,
-which shortens the coupon stream, raises the fair coupon (6.20\%).
+longer, which should raise the fair coupon $c$. Contrary to the Athena, a longer life also means more coupons, since
+the Phoenix pays its coupon at every date where the index is above $B_c$. Each point of coupon is then worth more to
+the investor, and this effect dominates above 95\%: the fair coupon is 5.46\% with an autocall barrier at 90\%,
+6.10\% at 95\%, 6.04\% at 100\% and 5.31\% at 110\%. Conversely, a step-down of the autocall barrier, which shortens
+the coupon stream, raises the fair coupon.
 
 
 \subsection*{Coupon barrier}
@@ -481,166 +503,278 @@ at a coupon barrier of 70\% (6.04\% instead of 6.41\% without memory), and 2.41 
 
 \subsection*{Dividend}
 
-If the underlying asset increases its dividend, the forward decreases: the put is more valuable, the coupons and the
-calls less likely, and the fair coupon $c$ increases. The investor does not receive the dividends. The exposure is a
-third of the Athena one ($-0.32$ per point of carry against $-1.12$), the coupons being paid on a shorter horizon.
+If the underlying asset increases its dividend, the forward decreases: the put is more valuable, the calls less
+likely, and the fair coupon $c$ increases. The investor does not receive the dividends. But a lower forward also
+delays the call, so that more coupons are paid: the exposure is about half of the Athena one ($-0.32$ per point of
+carry against $-0.69$ for the quarterly Athena).
 
 
 \subsection*{Spread}
 
-
+The issuer funds itself at $r + s$, $s$ being its credit spread, and discounts the cash flows of the note at this
+rate. A higher spread lowers $\E[D(\tau)]$ and increases the funding benefit $1 - \E[D(\tau)]$, which is given back
+to the investor through a higher coupon. Since a unit coupon is worth more in a Phoenix than in an Athena ($B$ is
+larger), the same funding benefit buys fewer points of coupon: the coupon of the Phoenix is about half as sensitive
+to the spread.
 
 
 \subsection*{Risk free rate}
 
-
+As for the Athena, a higher rate raises the forwards, which calls the note earlier and lowers the put, but it also
+lowers the discount factors and increases the funding benefit of the issuer. For the Phoenix, a third effect adds to
+the second one: an earlier call removes coupons. The coupon $c$ increases with the rates, more than for the Athena.
 
 
 \subsection*{Maturity}
 
-
+A longer maximal maturity leaves more time for the knock-in of the paths that are not called, and the put is more
+valuable; it also adds coupon dates, which makes each point of coupon worth more. The first effect dominates: the
+fair coupon increases with the maturity, at a decreasing rate since most notes are called during the first year.
 
 
 \subsection*{Skew}
 
-
-
-
+The skew acts on the Phoenix in two ways. The put is a vanilla put struck at the barrier plus a digital put, priced
+by the skew: a steeper skew makes it more expensive. And a negative skew makes the distribution of the index more
+left-skewed with a higher median: the note is called earlier, so fewer coupons are paid. For the Athena, the earlier
+call offsets the more expensive put; for the Phoenix, both effects raise the coupon. The investor of a Phoenix is
+short skew.
 
 
 \subsection*{Correlation}
 
-
-
+On a single underlying, the only correlation is the one between the index and its volatility, which drives the skew.
+For a worst-of Phoenix on several underlyings, the investor is long correlation: a lower correlation makes it more
+likely that one of the underlyings ends below the protection barrier or below the coupon barrier, and less likely
+that all of them are above the autocall barrier. The put is more valuable and the coupons less likely, so the
+coupon $c$ increases. Worst-of notes are outside the scope of this report (Section~\ref{sec:limitations}).
 
 
 \subsection{Pricing : A numerical example}
 
 
-Let us now consider a synthetic Phoenix issued by a risky issuer, which
-requires taking into account the credit spread of the issuer. The product
-is written on the CAC~40 index (dividends not reinvested). Its initial level
-is fixed on 31 January 2025 and it matures in November 2027. The underlying
-is observed quarterly: at each observation date, a coupon $c$ is paid if the
-index closes at or above the coupon barrier $B_c = 70\%$ of its initial
-level, together with the coupons missed since the last payment (memory),
-and the product is redeemed early if the index closes at or above $100\%$
-of its initial level. If the product has not been called, the investor
-receives at maturity the last coupon if the index is at or above the coupon
-barrier, the notional if it is at or above the protection barrier
-$B_p = 60\%$, and the notional reduced by the full decline of the index
-otherwise.
+Let us now consider a synthetic Phoenix written on the CAC~40 index (dividends not reinvested). Its initial
+level is fixed on 12 February 2025, the date of the market data, and its maximal maturity is 4 years. The underlying
+is observed quarterly: at each observation date, a coupon of 1.5\% (6\% per annum) is paid if the index closes at or
+above the coupon barrier $B_c = 70\%$ of its initial level, together with the coupons missed since the last payment
+(memory), and the product is redeemed early if the index closes at or above $100\%$ of its initial level. If the
+product has not been called, the investor receives at maturity the last coupon if the index is at or above the coupon
+barrier, the notional if it is at or above the protection barrier $B_p = 60\%$, and the notional reduced by the full
+decline of the index otherwise. The base case is priced without the credit spread of the issuer, whose impact is
+studied with the other market parameters below.
 
 \subsubsection{Model}
 
+The underlying follows the Heston model of Section~\ref{sec:model}, calibrated on the CAC~40 implied volatility
+surface of 12 February 2025, with the forward curve bootstrapped from put--call parity. The paths are simulated on a
+weekly grid with 50{,}000 paths (Section~\ref{sec:method}); a daily grid is used for the daily observations and the
+daily monitored protection. The base case has the same dates and barriers as the base Athena of the companion report
+\cite{benguedda2026athena}, and it is priced on the same paths. All the figures and tables of this section come from
+the notebook \code{Products/Phoenix/phoenix\_synthetic\_pricing.ipynb}.
+
 \subsubsection{Pricing}
+
+For the purpose of the pricing of this product, we use the script \texttt{phoenix.py}\footnote{\url{https://github.com/bengueddalauzonelias/portfolio/tree/main/Products/Phoenix}} to build the product and \texttt{monte\_carlo.py}\footnote{\url{https://github.com/bengueddalauzonelias/portfolio/tree/main/Equity_Models}} to simulate the different paths. In this first basic case, we have the following result:
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llr}
+    \toprule
+     & & \textbf{Base case} \\
+    \midrule
+    \multirow{21}{*}{Contract}
+      & Maturity (years)                    & 4 \\
+      & Number of observations              & 16 \\
+      & Observation frequency (years)       & 0.25 \\
+      & Coupon (\% p.a.)                    & 6 \\
+      & First coupon barrier (\%)           & 70 \\
+      & Last coupon barrier (\%)            & 70 \\
+      & Memory                              & Yes \\
+      & First autocall barrier (\%)         & 100 \\
+      & Last autocall barrier (\%)          & 100 \\
+      & Step-down per observation (\%)      & 0 \\
+      & First call date (years)             & 0.25 \\
+      & Protection barrier (\%)             & 60 \\
+      & Protection type                     & European \\
+      & Redemption if knocked-in            & Standard \\
+      & Capital guaranteed (\%)             & 0 \\
+      & Buffer (\%)                         & 0 \\
+      & Range accrual (\%)                  & -- \\
+      & Duo barrier (\%)                    & -- \\
+      & Duo coupon ratio                    & -- \\
+      & Look-back                           & -- \\
+      & Nominal                             & 100 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal)                  & 99.96 \\
+      & 95\% confidence interval ($\pm$)    & 0.10 \\
+      & Fair coupon (\% p.a.)               & 6.04 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%)  & 13.29 \\
+      & Probability of a capital loss (\%)  & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 \\
+      & Expected life (years)               & 1.03 \\
+      & Expected number of coupons          & 3.28 \\
+      & Expected coupon paid (\% nominal)   & 5.23 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Contract features, pricing results and scenario statistics of the base-case Phoenix.}
+  \label{tab:phoenix-base-case-results}
+\end{table}
+
+We also plotted the probability of a call at each observation date.
+
+\begin{figure}[h]
+\centering
+\figfile{proba_call.png}{0.9\textwidth}
+\caption{Base Phoenix: probability of a call at each observation date, and cumulated.}
+\label{fig:proba_call}
+\end{figure}
+
+The call probabilities are exactly those of the Athena with the same autocall barrier: the coupon does not change the
+call rule. 55.4\% of the notes are called after one quarter, and 86.7\% before maturity. What changes is the way the
+coupon is paid. The Phoenix pays 3.28 coupons on average, for a total of 5.23\% of the nominal, against 3.01\% for the
+Athena: it also pays in the scenarios where the index stays between 70\% and 100\%, where the Athena pays nothing.
+This is why the coupon needed to price the note at par, 6.04\%, is much lower than the Athena's 10.54\%. The investor
+is still short the same down-and-in put, with a loss jump from 100 to 60 at the protection barrier.
+
+\begin{figure}[h]
+\centering
+\figfile{simulated_paths.png}{0.9\textwidth}
+\caption{Base Phoenix: simulated paths of the performance, grouped by outcome, with the coupon, autocall and
+protection barriers.}
+\label{fig:simulated_paths}
+\end{figure}
 
 \subsubsection{Sensitivities}
 
-\subsection{Features of Phoenix products}
-
-\subsubsection{Exercise frequency}
-
-\subsubsection{Memory}
-
-\subsubsection{Step-down barrier}
-
-\subsubsection{Airbag}
-
-\subsubsection{Buffer}
-
-\subsubsection{Guaranteed capital}
-
-\subsubsection{Coupon range accrual}
-
-\subsubsection{Duo mechanism}
-
-\subsubsection{Look back}
-
-
+We are now interested in how the different parameters impact the price of a basic Phoenix product. As for the
+Athena, the price after the emission and the fair coupon $c^\star$ move in opposite directions. Each parameter is
+moved alone, all the others being those of the base case, on the same paths (common random numbers).
+\clearpage
+\subsubsection*{Protection barrier}
 
 \begin{figure}[h]
 \centering
-\begin{tikzpicture}
-\begin{axis}[width=0.75\textwidth, height=0.36\textwidth, ymin=0, ymax=65, ylabel={Call probability (\%)},
-  grid=major, grid style={gray!20}, title style={font=\small}, ybar, bar width=5pt,
-  xlabel={Observation date (years)}, xtick={0.25,1,2,3,4}, title={Phoenix, quarterly (maturity: 13.3\%)}]
-\addplot[fill=phoenix!70, draw=phoenix] coordinates {(0.25,55.43) (0.5,10.63) (0.75,6.24) (1,3.86) (1.25,2.21) (1.5,1.57)
-  (1.75,1.41) (2,1.13) (2.25,0.82) (2.5,0.69) (2.75,0.59) (3,0.51) (3.25,0.46) (3.5,0.47) (3.75,0.39) (4,0.30)};
-\end{axis}
-\end{tikzpicture}
-\caption{Base Phoenix: probability of being called at each observation date (autocall barrier at 100\%).}
-\label{fig:call_probabilities}
+\figfile{protection_move.png}{\textwidth}
+\caption{Fair coupon, probability of a capital loss, expected loss, expected life and expected number of coupons as
+functions of the protection barrier.}
+\label{fig:protection_move}
 \end{figure}
 
-The base Phoenix has a maturity of 4 years, quarterly observations, a coupon of 6\% a year (1.5\% a quarter)
-with memory and a coupon barrier at 70\%, an autocall barrier at 100\% and a European protection at 60\%. Its price
-is $99.963 \pm 0.099$ (95\%) and its fair coupon $6.04\%$ a year. 55.4\% of the notes are called after one
-quarter (Figure~\ref{fig:call_probabilities}), the expected life is 1.03 years, 3.28 coupons are paid on
-average, 13.3\% of the notes reach maturity and 5.2\% lose capital, with an expected loss of 3.05\%.
-
-\begin{figure}[h]
-\centering
-\figfile{phoenix_scenarios.png}{0.9\textwidth}
-\caption{Base Phoenix: simulated paths of the performance, grouped by outcome.}
-\label{fig:phoenix_scenarios}
-\end{figure}
-
-\subsection{All the forms of the Phoenix}
-Table~\ref{tab:phoenix_variants} changes one feature of the base case at a time. All prices are computed at the same
-coupon of 6\%; the fair coupon is the comparable quantity.
-
-\begin{table}[h]
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{@{}lrrrrrrr@{}}
-\toprule
-\textbf{Variant} & \textbf{Price at 6\%} & \textbf{Fair coupon} & \textbf{P(maturity)} & \textbf{P(loss)} & \textbf{E[loss]} & \textbf{E[life]} & \textbf{E[coupons]} \\
- & & \textbf{(\% p.a.)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(y)} & \\
-\midrule
-Base (quarterly, memory, CB 70\%) & 99.96 & 6.04 & 13.29 & 5.22 & 3.05 & 1.03 & 3.28 \\
-No memory & 99.67 & 6.41 & 13.29 & 5.22 & 3.05 & 1.03 & 3.28 \\
-Coupon barrier 50\% & 100.54 & 5.43 & 13.29 & 5.22 & 3.05 & 1.03 & 3.83 \\
-Coupon barrier 60\% & 100.30 & 5.67 & 13.29 & 5.22 & 3.05 & 1.03 & 3.61 \\
-Coupon barrier 80\% & 99.49 & 6.67 & 13.29 & 5.22 & 3.05 & 1.03 & 2.80 \\
-Coupon barrier = autocall barrier (= snowball Athena) & 97.80 & 10.54 & 13.29 & 5.22 & 3.05 & 1.03 & 0.87 \\
-Unconditional coupon (CB 0\%) & 100.87 & 5.13 & 13.29 & 5.22 & 3.05 & 1.03 & 4.13 \\
-Monthly observations & 99.91 & 6.19 & 7.77 & 3.13 & 1.83 & 0.59 & 5.53 \\
-Semi-annual observations & 100.22 & 5.82 & 18.61 & 6.97 & 4.08 & 1.48 & 2.38 \\
-Annual observations & 100.62 & 5.63 & 25.70 & 9.06 & 5.27 & 2.06 & 1.67 \\
-Autocall barrier 90\% & 100.19 & 5.46 & 3.13 & 1.70 & 1.01 & 0.42 & 1.37 \\
-Step-down 1.25\% per quarter & 99.86 & 6.20 & 7.14 & 4.29 & 2.54 & 0.84 & 2.62 \\
-Non-call 1 year & 100.86 & 5.46 & 22.06 & 8.42 & 4.92 & 1.89 & 6.21 \\
-Protection 50\% & 100.71 & 5.16 & 13.29 & 3.43 & 2.25 & 1.03 & 3.28 \\
-Protection 70\% (= coupon barrier) & 99.28 & 6.85 & 13.29 & 7.32 & 3.78 & 1.03 & 3.28 \\
-American protection (continuous) & 99.00 & 7.18 & 13.29 & 9.22 & 4.11 & 1.03 & 3.28 \\
-American protection (daily) & 99.07 & 7.11 & 13.23 & 8.98 & 4.06 & 1.03 & 3.28 \\
-Airbag & 101.28 & 4.49 & 13.29 & 5.22 & 1.61 & 1.03 & 3.28 \\
-Capital guaranteed 90\% & 102.26 & 3.33 & 13.29 & 5.22 & 0.52 & 1.03 & 3.28 \\
-\bottomrule
-\end{tabular}}
-\caption{Phoenix variants on the CAC40 (Heston, 50{,}000 paths, standard errors of the prices between 0.02 and
-0.06). P(call $t_1$) is 55.4\% for every quarterly variant except the non-call period (0\%) and the 90\% autocall
-barrier (90.0\%).}
-\label{tab:phoenix_variants}
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{rccc}
+    \toprule
+    \makecell{Protection\\barrier (\%)} & \makecell{Fair coupon\\(\% p.a.)} &
+    \makecell{Probability of a\\capital loss (\%)} & \makecell{Expected loss\\(\% nominal)} \\
+    \midrule
+     10 & 2.86 &  0.10 & 0.09 \\
+     20 & 3.18 &  0.48 & 0.41 \\
+     30 & 3.66 &  1.09 & 0.87 \\
+     40 & 4.35 &  2.07 & 1.50 \\
+     50 & 5.16 &  3.43 & 2.25 \\
+     55 & 5.63 &  4.32 & 2.67 \\
+     \textbf{60} & \textbf{6.04} & \textbf{5.22} & \textbf{3.05} \\
+     65 & 6.45 &  6.19 & 3.42 \\
+     70 & 6.85 &  7.32 & 3.78 \\
+     75 & 7.15 &  8.34 & 4.07 \\
+     80 & 7.45 &  9.57 & 4.34 \\
+     90 & 7.82 & 11.81 & 4.68 \\
+    100 & 7.91 & 13.29 & 4.77 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Fair coupon and loss statistics as a function of the protection barrier (base case in bold). The expected
+           life (1.03 years) and the expected number of coupons (3.28) do not depend on the protection barrier.}
+  \label{tab:phoenix-sensi-protection}
 \end{table}
 
-\paragraph{Reading the table.}
-\begin{itemize}
-\item \emph{Coupon barrier and memory.} Lowering the coupon barrier from 80\% to 50\% raises the expected number of
-coupons from 2.80 to 3.83 and lowers the fair coupon from 6.67\% to 5.43\%; an unconditional coupon gives 5.13\%.
-Memory is worth 0.37 point of coupon at a barrier of 70\% (6.04\% instead of 6.41\%), and its value grows with the
-barrier (Figure~\ref{fig:fair_coupon}): at 90\%, 7.87\% with memory against 10.28\% without. With the coupon barrier
-equal to the autocall barrier, the memory Phoenix is the snowball Athena (10.54\%, as the quarterly Athena of the
-companion report \cite{benguedda2026athena}).
-\item \emph{Observation frequency and early calls.} Contrary to the Athena, a Phoenix pays its coupons as long as it
-lives: everything that shortens its life shortens the coupon stream. Monthly observations raise the fair coupon
-(6.19\%) and annual observations lower it (5.63\%); a step-down of the autocall barrier raises it (6.20\%), whereas
-it lowers the Athena coupon. A non-call period of one year lengthens the expected life to 1.89 years and lowers the
-fair coupon to 5.46\%.
-\item \emph{Protection.} The American protection costs 1.14 points of coupon (7.18\%), the airbag gives back 1.55
-points (4.49\%), a 90\% guarantee leaves 3.33\%.
-\end{itemize}
+A higher protection barrier exposes the investor more often to a capital loss: the put he sells is more valuable, and
+the fair coupon increases, from 5.16\% at 50\% to 7.45\% at 80\%. The loss statistics are exactly those of the Athena,
+since the two notes share the same put; the fair coupon moves less, because each point of coupon is worth 1.75 times
+more in the Phoenix. The calls and the coupons do not move: the protection only matters at maturity.
+
+\clearpage
+\subsubsection*{Autocall barrier}
+
+\begin{figure}[h]
+\centering
+\figfile{autocall_move.png}{\textwidth}
+\caption{Fair coupon, loss statistics, expected life and expected number of coupons as functions of the autocall
+barrier.}
+\label{fig:autocall_move}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{rccccc}
+    \toprule
+    \makecell{Autocall\\barrier (\%)} & \makecell{Fair coupon\\(\% p.a.)} & \makecell{Probability of a\\capital loss (\%)} &
+    \makecell{Expected loss\\(\% nominal)} & \makecell{Expected life\\(years)} & \makecell{Expected number\\of coupons} \\
+    \midrule
+     50 & 2.65 &  0.00 & 0.00 & 0.25 &  1.00 \\
+     70 & 2.75 &  0.04 & 0.02 & 0.25 &  1.00 \\
+     80 & 3.46 &  0.35 & 0.21 & 0.28 &  1.03 \\
+     90 & 5.46 &  1.70 & 1.01 & 0.42 &  1.37 \\
+     95 & 6.10 &  3.08 & 1.82 & 0.62 &  1.96 \\
+     \textbf{100} & \textbf{6.04} & \textbf{5.22} & \textbf{3.05} & \textbf{1.03} & \textbf{3.28} \\
+    105 & 5.66 &  8.16 & 4.75 & 1.73 &  5.67 \\
+    110 & 5.31 & 10.48 & 6.04 & 2.39 &  8.04 \\
+    120 & 4.96 & 12.79 & 7.33 & 3.21 & 11.07 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Fair coupon, loss statistics, expected life and coupons as a function of the autocall barrier (base case in
+           bold).}
+  \label{tab:phoenix-sensi-autocall}
+\end{table}
+
+Here the Phoenix and the Athena part ways. A higher autocall barrier makes the call less likely: the note lives longer
+and more paths are exposed to the put (probability of a loss from 1.70\% at 90\% to 10.48\% at 110\%). For the Athena,
+which pays a single coupon at the call, the fair coupon rises from 6.66\% to 12.69\%. For the Phoenix, a longer life
+also means more coupon dates: 8.04 coupons are paid on average at 110\% against 3.28 at 100\%, so each point of
+coupon is worth much more. The fair coupon first increases, up to 6.10\% at 95\%, then decreases (5.31\% at 110\%,
+4.96\% at 120\%): above 95\%, the additional coupons outweigh the additional put. Below 70\%, the note is called at the
+first date on every path, and the fair coupon is the three-month rate, 2.65\%, as for the Athena.
+
+\clearpage
+\subsubsection*{Coupon barrier}
+
+\begin{figure}[h]
+\centering
+\figfile{coupon_move.png}{\textwidth}
+\caption{Fair coupon and scenario statistics as functions of the coupon barrier.}
+\label{fig:coupon_move}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{rcc}
+    \toprule
+    \makecell{Coupon\\barrier (\%)} & \makecell{Fair coupon\\(\% p.a.)} & \makecell{Expected number\\of coupons} \\
+    \midrule
+     50 &  5.43 & 3.83 \\
+     60 &  5.67 & 3.61 \\
+     \textbf{70} & \textbf{6.04} & \textbf{3.28} \\
+     80 &  6.67 & 2.80 \\
+     90 &  7.87 & 2.03 \\
+    100 & 10.54 & 0.87 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Fair coupon and expected number of coupons as a function of the coupon barrier (base case in bold). The
+           calls and the losses do not depend on the coupon barrier.}
+  \label{tab:phoenix-sensi-coupon}
+\end{table}
+
+A higher coupon barrier pays fewer coupons, so the fair coupon increases, slowly up to 70\% and steeply above: from
+80\% to 100\%, the expected number of coupons falls from 2.80 to 0.87. With memory, a coupon barrier equal to the
+autocall barrier gives back exactly the snowball Athena: the coupons are only paid at the call, all together, and the
+fair coupon is the Athena's, 10.54\%. Figure~\ref{fig:fair_coupon} compares the coupon barrier curve with and without
+memory, and the protection barrier curve with a European and an American protection.
 
 \begin{figure}[h]
 \centering
@@ -663,8 +797,717 @@ continuous monitoring). Without memory, the fair coupon reaches 23.94\% at a cou
 \label{fig:fair_coupon}
 \end{figure}
 
+\clearpage
+\subsubsection*{Market parameters}
+
+The note is now kept unchanged (coupon 6\%, barriers of the base case) and the market moves
+(Table~\ref{tab:phoenix-market}).
+
+\paragraph{Volatility.} One volatility point costs about 0.33 on a nominal of 100, as for the Athena, and adds about
+0.40 point of fair coupon (from 4.94\% at $-3$ points to 7.24\% at $+3$ points). The investor is short the put, whose
+value increases with the volatility, and the coupons, digital calls struck at 70\%, are slightly less likely (3.37 to
+3.19 coupons).
+
+\begin{figure}[h]
+\centering
+\figfile{vol_move.png}{\textwidth}
+\caption{Base Phoenix: price at 6\%, fair coupon, probability of a capital loss and expected number of coupons as
+functions of a parallel shift of the volatility level.}
+\label{fig:vol_move}
+\end{figure}
+
+\paragraph{Dividends.} A higher dividend yield lowers the forwards: the put is more valuable and the note is called
+later. For the Athena, both effects raise the coupon. For the Phoenix, the later call also adds coupons (3.10 coupons
+at $-1\%$, 3.48 at $+1\%$), which partly offsets the put: the fair coupon only moves from 5.73\% to 6.40\%, against
+9.38\% to 12.02\% for the Athena.
+
+\begin{figure}[h]
+\centering
+\figfile{dividend_move.png}{\textwidth}
+\caption{Base Phoenix as a function of a parallel shift of the borrow + dividend yield.}
+\label{fig:dividend_move}
+\end{figure}
+
+\paragraph{Risk-free rate.} Higher rates raise the forwards and the discounting. The put is cheaper, but the funding
+benefit of the issuer is larger and the note is called earlier, with fewer coupons: the price at 6\% falls from 100.64
+at $-1\%$ to 99.35 at $+1\%$ and the fair coupon rises from 5.30\% to 6.82\%, 0.76 point per point of rate (0.61 for
+the Athena). The Phoenix is a more rate-sensitive product than the Athena.
+
+\begin{figure}[h]
+\centering
+\figfile{rate_move.png}{\textwidth}
+\caption{Base Phoenix as a function of a parallel shift of the zero-coupon curve.}
+\label{fig:rate_move}
+\end{figure}
+
+\paragraph{Issuer spread.} Discounting the cash flows at $r + s$ costs about 0.46 per 50bp and adds 0.55 point of
+fair coupon per 50bp (6.06\% at $s = 0$, 8.24\% at $s = 200$bp, control variate switched off), about half of the
+Athena sensitivity: the funding benefit is the same, but it is spread over a larger value of the unit coupon $B$.
+
+\begin{figure}[h]
+\centering
+\figfile{spread_move.png}{\textwidth}
+\caption{Base Phoenix as a function of the credit spread of the issuer.}
+\label{fig:spread_move}
+\end{figure}
+
+\paragraph{Maturity.} The fair coupon increases with the maturity at a decreasing rate: 4.21\%, 5.33\%, 5.77\%,
+6.04\% and 6.15\% from 1 to 5 years. A longer maturity makes the put more valuable (probability of a loss from 1.67\%
+to 5.62\%) and adds coupon dates (1.98 to 3.50 coupons), the first effect dominating.
+
+\begin{figure}[h]
+\centering
+\figfile{maturity_move.png}{\textwidth}
+\caption{Same Phoenix with a maximal maturity from 1 to 5 years.}
+\label{fig:maturity_move}
+\end{figure}
+
+\paragraph{Skew.} The spot-variance correlation $\rho$ is moved alone, from $-0.9$ to $0$. A more negative $\rho$ makes
+the low strikes more expensive (4-year put at 60\%: 2.39\% of $S_0$ at $\rho = -0.9$ against 1.54\% at $\rho = 0$) and
+the call earlier (60.0\% at the first date against 46.9\%). For the Athena, these two effects offset each other. For
+the Phoenix, the earlier call removes coupons (2.82 coupons at $\rho = -0.9$ against 4.24 at $\rho = 0$), so that both
+effects raise the coupon: the fair coupon goes from 5.18\% at $\rho = 0$ to 6.40\% at $\rho = -0.9$. The Phoenix
+investor is short skew, the Athena investor almost neutral.
+
+\begin{figure}[h]
+\centering
+\figfile{skew_move.png}{\textwidth}
+\caption{Base Phoenix as a function of the spot-variance correlation $\rho$ of the Heston model.}
+\label{fig:skew_move}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+ & \textbf{Scenario} & \textbf{Price at 6\%} & \textbf{Fair coupon} & \textbf{P(call $t_1$)} & \textbf{P(loss)} & \textbf{E[coupons]} \\
+ & & & \textbf{(\% p.a.)} & \textbf{(\%)} & \textbf{(\%)} & \\
+\midrule
+\multirow{3}{*}{Volatility} & $-3$ vol pts & 100.90 & 4.94 & 56.82 & 3.79 & 3.37 \\
+ & base & 99.96 & 6.04 & 55.43 & 5.22 & 3.28 \\
+ & $+3$ vol pts & 98.95 & 7.24 & 54.17 & 6.70 & 3.19 \\
+\midrule
+\multirow{2}{*}{Dividend yield} & $-1\%$ & 100.22 & 5.73 & 56.95 & 4.51 & 3.10 \\
+ & $+1\%$ & 99.65 & 6.40 & 53.88 & 6.07 & 3.48 \\
+\midrule
+\multirow{2}{*}{Rates} & $-1\%$ & 100.64 & 5.30 & 53.88 & 6.07 & 3.48 \\
+ & $+1\%$ & 99.35 & 6.82 & 56.95 & 4.51 & 3.10 \\
+\midrule
+\multirow{3}{*}{Issuer spread} & 0bp & 99.95 & 6.06 & 55.43 & 5.22 & 3.28 \\
+ & 100bp & 99.04 & 7.15 & 55.43 & 5.22 & 3.28 \\
+ & 200bp & 98.15 & 8.24 & 55.43 & 5.22 & 3.28 \\
+\midrule
+\multirow{3}{*}{Maturity} & 1 year & 100.88 & 4.21 & 55.43 & 1.67 & 1.98 \\
+ & 2 years & 100.44 & 5.33 & 55.43 & 3.54 & 2.61 \\
+ & 5 years & 99.87 & 6.15 & 55.43 & 5.62 & 3.50 \\
+\midrule
+\multirow{2}{*}{Correlation $\rho$} & $-0.9$ & 99.71 & 6.40 & 59.97 & 4.82 & 2.82 \\
+ & $0$ & 100.89 & 5.18 & 46.89 & 5.60 & 4.24 \\
+\bottomrule
+\end{tabular}
+\caption{Base Phoenix under moved market parameters (coupon 6\%, nominal 100). Base case: price 99.96, fair coupon
+6.04\%.}
+\label{tab:phoenix-market}
+\end{table}
+
+\clearpage
+\subsubsection{Hedging}
+
+From the desk's point of view, the issuer is short the note: it is long the down-and-in put sold by the investor and
+short the strip of conditional coupons and the autocall feature. Table~\ref{tab:phoenix-hedge} gives its hedge at
+inception for a nominal of 1 million euros (10{,}000 notes of 100).
+
+\begin{table}[htbp]
+\centering
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrl@{}}
+\toprule
+\textbf{Risk of the note} (nominal 100) & \textbf{Value} & \textbf{Hedge of the issuer} (nominal 1M) \\
+\midrule
+Delta & 0.00059 per index point & buy 5.9 index units ($\approx$ 47{,}000 EUR of futures) \\
+Vega & $-0.335$ per vol point & long 3{,}350 EUR per vol point: sell 173 puts 4 years, strike 60\% \\
+Dividend & $-0.325$ per $+1\%$ & long 3{,}250 EUR per point of yield: sell dividend futures \\
+Rho & $-0.599$ per $+1\%$ & long 5{,}990 EUR per point of rate: receive fixed on a swap \\
+\bottomrule
+\end{tabular}}
+\caption{Base Phoenix: Greeks of the note and hedge of the issuer at inception (vega of the 4-year put struck at 60\%:
+19.3 per vol point and per unit of index).}
+\label{tab:phoenix-hedge}
+\end{table}
+
+At inception, the Phoenix is almost delta-neutral: it is equivalent to 4.7\% of its nominal invested in the index,
+against 37.8\% for the Athena. A rise of the index reduces the short put, but it also brings the call forward and stops
+a coupon stream that is worth more than its cost. The hedge is much less stable than this number suggests
+(Figure~\ref{fig:hedging_profiles}): when the index falls, the call becomes unlikely and the note behaves more and more
+like a short put, so its delta rises to 0.0044 at 85\% of the initial level, 0.0097 at 75\% and 0.0213 at the
+protection barrier. The issuer must buy index in a falling market, from almost nothing. The vega of the note is most
+negative, about $-1.13$ per vol point, between 75\% and 80\% of the initial level, just above the coupon barrier, where
+both the coupons and the knock-in are most uncertain. The rate risk is three times that of the Athena: the issuer pays
+a regular coupon stream, which it hedges with swaps. Close to maturity, the jumps of the payoff at the coupon barrier
+and at the protection barrier create large delta and gamma around these two levels (pin risk).
+
+\begin{figure}[h]
+\centering
+\figfile{hedging_profiles.png}{\textwidth}
+\caption{Base Phoenix: price, delta, gamma and vega of the note as functions of the spot (30{,}000 paths). The issuer
+holds the opposite of these Greeks.}
+\label{fig:hedging_profiles}
+\end{figure}
+
+\clearpage
+\subsection{Features of Phoenix products}
+
+We have seen the basic Phoenix product, its construction, its sensitivities and its hedging. We now add the features
+that issuers combine with it, one at a time, all the other terms being those of the base case. Each feature is one
+parameter of the class \code{Phoenix} (Table~\ref{tab:parameters}).
+\clearpage
+\subsubsection{Exercise frequency}
+
+The coupon and autocall barriers can be observed every year, every semester, every month or every day instead of
+every quarter, the coupon of a period being $c$ times its length.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llrrrrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Annual} & \textbf{Semi-annual} & \textbf{Monthly} & \textbf{Daily} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Number of observations & 16 & 4 & 8 & 48 & 1008 \\
+      & Observation frequency (years) & 0.25 & 1 & 0.5 & 1/12 & 1/252 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 100.62 & 100.22 & 99.91 & 99.94 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.11 & 0.11 & 0.08 & 0.04 \\
+      & Fair coupon (\% p.a.) & 6.04 & 5.63 & 5.82 & 6.19 & 6.52 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 25.70 & 18.61 & 7.77 & 1.80 \\
+      & Probability of a capital loss (\%) & 5.22 & 9.06 & 6.97 & 3.13 & 0.78 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 5.27 & 4.08 & 1.83 & 0.46 \\
+      & Expected life (years) & 1.03 & 2.06 & 1.48 & 0.59 & 0.13 \\
+      & Expected number of coupons & 3.28 & 1.67 & 2.38 & 5.53 & 25.97 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 10.39 & 7.49 & 2.98 & 0.67 \\
+    \bottomrule
+  \end{tabular}}
+  \caption{Effect of the observation frequency of the coupon and autocall barriers, all other parameters being those of the base case.}
+  \label{tab:phoenix-frequency}
+\end{table}
+
+More frequent observations call the note earlier (expected life from 2.06 years to 0.13 year) and reduce the
+probability of a loss (from 9.06\% to 0.78\%), but they also stop the coupon stream earlier: the coupon paid falls from
+10.39\% to 0.67\% of the nominal. The fair coupon increases with the frequency, from 5.63\% (annual) to 6.52\%
+(daily), in the same direction as for the Athena but over a much narrower range (9.41\% to 11.74\% for the Athena):
+since the Phoenix also pays coupons when the note is not called, its coupon depends less on the timing of the call.
+
+\clearpage
+\subsubsection{Memory}
+
+With memory, the coupons missed because the index was below the coupon barrier are paid at the next date where it is
+back above. Without memory, they are lost for good.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{No memory} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Memory & Yes & No \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 99.67 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.10 \\
+      & Fair coupon (\% p.a.) & 6.04 & 6.41 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 3.05 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 3.28 & 3.28 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 4.93 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Phoenix without memory: a missed coupon is lost for good.}
+  \label{tab:phoenix-memory}
+\end{table}
+
+The coupon dates are the same, but the amounts paid are smaller without memory (4.93\% of the nominal instead of
+5.23\%): the fair coupon rises from 6.04\% to 6.41\%. The memory is worth 0.37 point of coupon here, and much more
+with a higher coupon barrier (2.41 points at 90\%, Figure~\ref{fig:fair_coupon}), where coupons are missed more
+often.
+
+\clearpage
+\subsubsection{Step-down barrier}
+
+The autocall barrier decreases by 1\% at each observation date, from 100\% to 85\%.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Step-down 1\%} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Last autocall barrier (\%) & 100 & 85 \\
+      & Step-down per observation (\%) & 0 & 1 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 99.89 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.09 \\
+      & Fair coupon (\% p.a.) & 6.04 & 6.16 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 8.12 \\
+      & Probability of a capital loss (\%) & 5.22 & 4.44 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 2.62 \\
+      & Expected life (years) & 1.03 & 0.87 \\
+      & Expected number of coupons & 3.28 & 2.73 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 4.38 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Step-down autocall barrier, decreasing by 1\% per quarterly observation from 100\% to 85\%.}
+  \label{tab:phoenix-step-down}
+\end{table}
+
+The step-down calls the notes that drift slightly below their initial level: the probability to reach maturity falls
+from 13.29\% to 8.12\% and the probability of a loss from 5.22\% to 4.44\%. For the Athena, this lowers the fair coupon
+from 10.54\% to 8.24\%. For the Phoenix, it slightly raises it, to 6.16\%: the earlier calls stop the coupon stream
+(2.73 coupons instead of 3.28), and this loss of coupons outweighs the smaller put. A step-down makes a Phoenix safer,
+but not cheaper.
+
+\clearpage
+\subsubsection{Airbag}
+
+The put sold by the investor is struck at the protection barrier: below 60\%, the investor receives
+$N P_T / B^{\mathrm{prot}}$ instead of $N P_T$, and the redemption is continuous at the barrier.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Airbag} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Put strike (\%) & 100 & 60 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 101.28 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.07 \\
+      & Fair coupon (\% p.a.) & 6.04 & 4.49 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 1.61 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 3.28 & 3.28 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 5.23 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Airbag: the put is struck at the protection barrier (60\%), all other parameters being those of the base case.}
+  \label{tab:phoenix-airbag}
+\end{table}
+
+The scenarios and the coupons are those of the base case; only the amount lost changes. The expected loss is halved
+(1.61\% instead of 3.05\%) and the fair coupon falls to 4.49\%. As for the Athena, the airbag removes the digital part
+of the put, hence the loss jump and most of the pin risk at the protection barrier.
+
+\clearpage
+\subsubsection{Buffer}
+
+With a buffer of 10\%, the investor only loses below 90\%, one for one: the redemption is $N \min(1, P_T + 10\%)$
+below the protection barrier $B^{\mathrm{prot}} = 90\%$.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Buffer 10\%} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Protection barrier (\%) & 60 & 90 \\
+      & Buffer (\%) & 0 & 10 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 99.54 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.08 \\
+      & Fair coupon (\% p.a.) & 6.04 & 6.55 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 11.81 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 3.50 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 3.28 & 3.28 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 5.23 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Buffer of 10\%: the investor only loses below 90\%, one for one, all other parameters being those of the base case.}
+  \label{tab:phoenix-buffer}
+\end{table}
+
+The losses start as soon as the index ends below 90\%: the probability of a loss rises from 5.22\% to 11.81\% and the
+fair coupon from 6.04\% to 6.55\%. But there is no more loss jump, and the largest losses are reduced by 10 points.
+
+\clearpage
+\subsubsection{Guaranteed capital}
+
+The redemption at maturity is floored at 90\% or 100\% of the nominal.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llrrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Guaranteed 90\%} & \textbf{Guaranteed 100\%} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Capital guaranteed (\%) & 0 & 90 & 100 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 102.26 & 102.74 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.04 & 0.03 \\
+      & Fair coupon (\% p.a.) & 6.04 & 3.33 & 2.77 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 & 0.00 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 0.52 & 0.00 \\
+      & Expected life (years) & 1.03 & 1.03 & 1.03 \\
+      & Expected number of coupons & 3.28 & 3.28 & 3.28 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 5.23 & 5.23 \\
+    \bottomrule
+  \end{tabular}}
+  \caption{Capital guarantee: the redemption at maturity is floored at 90\% or 100\% of the nominal.}
+  \label{tab:phoenix-guaranteed}
+\end{table}
+
+With a full guarantee, the put disappears and the coupons are only financed by the funding benefit of the issuer:
+the fair coupon falls to 2.77\% (4.83\% for the Athena, whose single coupon is paid less often). With 90\% guaranteed,
+the expected loss is divided by six and the fair coupon is 3.33\%. A capital-guaranteed Phoenix is close to a
+callable bond paying a conditional coupon, financed by the rates.
+
+\clearpage
+\subsubsection{Coupon range accrual}
+
+The coupon of each quarter only accrues on the weekly dates of the quarter where the index is between 80\% and 120\%;
+it is still paid only if the index is above the coupon barrier at the observation date.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Range accrual 80-120\%} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Range accrual (\%) & -- & [80, 120] \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 99.02 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.10 \\
+      & Fair coupon (\% p.a.) & 6.04 & 7.41 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 3.05 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 3.28 & 3.28 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 4.25 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Range accrual: the coupon of each quarter only accrues on the weekly dates where the index is between 80\% and 120\%.}
+  \label{tab:phoenix-range}
+\end{table}
+
+The range accrual has a much larger effect than on the Athena (10.99\% instead of 10.54\%): the coupon paid falls
+from 5.23\% to 4.25\% of the nominal and the fair coupon rises from 6.04\% to 7.41\%. The Phoenix pays a coupon for
+every quarter of its life, so every week spent outside the range costs a coupon, whereas the Athena only pays at the
+call, usually after one quarter.
+
+\clearpage
+\subsubsection{Duo mechanism}
+
+Two call levels: above 100\%, the note is called with the coupon of the date; between 90\% and 100\%, it is also
+called, but the coupon of the date (with the memory) is halved.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Duo 90\% / 50\%} \\
+    \midrule
+    \multirow{2}{*}{Contract}
+      & Duo barrier (\%) & -- & 90 \\
+      & Duo coupon ratio & -- & 0.5 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 99.89 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.06 \\
+      & Fair coupon (\% p.a.) & 6.04 & 6.35 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 3.13 \\
+      & Probability of a capital loss (\%) & 5.22 & 1.70 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 1.01 \\
+      & Expected life (years) & 1.03 & 0.42 \\
+      & Expected number of coupons & 3.28 & 1.37 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 1.87 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Duo mechanism: call above 100\%, and also between 90\% and 100\% with half of the coupon of the date.}
+  \label{tab:phoenix-duo}
+\end{table}
+
+The note is called on almost every path and very early (probability to reach maturity 3.13\%, expected life 0.42
+year), so the probability of a loss falls to 1.70\%. For the Athena, this lowers the fair coupon (8.86\%). For the
+Phoenix, the coupon stream is cut short (1.37 coupons instead of 3.28) and the fair coupon rises to 6.35\%: as for
+the step-down, the duo makes the Phoenix safer but not cheaper.
+
+\clearpage
+\subsubsection{Look back}
+
+The reference level $\Sref$ is the minimum of the index over the first month: every barrier, including the coupon
+barrier, is a fraction of a lower level on the paths that fell during the first month.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Look back min 1m} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Look back & -- & min over 1 month \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 100.20 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.09 \\
+      & Fair coupon (\% p.a.) & 6.04 & 5.69 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 9.03 \\
+      & Probability of a capital loss (\%) & 5.22 & 3.57 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 2.09 \\
+      & Expected life (years) & 1.03 & 0.78 \\
+      & Expected number of coupons & 3.28 & 2.53 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 4.01 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Look back: the reference level is the minimum of the index over the first month.}
+  \label{tab:phoenix-lookback}
+\end{table}
+
+The look back calls the note earlier (expected life 0.78 year) and lowers the probability of a loss (3.57\% instead
+of 5.22\%). It removes coupons through the earlier call (2.53 coupons instead of 3.28) but also makes each coupon more
+likely, since the coupon barrier is lower on the paths that fell. Here the reduction of the loss dominates: the fair
+coupon falls to 5.69\%.
+
+\clearpage
+\subsubsection{Protection type}
+
+The protection can be American: the capital is at risk as soon as the index touches 60\% at any time, continuously or
+on daily closes.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{American} & \textbf{American (daily)} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Protection type & European & Continuous & Daily closes \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 99.00 & 99.07 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.10 & 0.10 \\
+      & Fair coupon (\% p.a.) & 6.04 & 7.18 & 7.11 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 & 13.23 \\
+      & Probability of a capital loss (\%) & 5.22 & 9.22 & 8.98 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 4.11 & 4.06 \\
+      & Expected life (years) & 1.03 & 1.03 & 1.03 \\
+      & Expected number of coupons & 3.28 & 3.28 & 3.28 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 5.23 & 5.22 \\
+    \bottomrule
+  \end{tabular}
+  \caption{American protection at 60\%, observed continuously (Brownian bridge) or on daily closes.}
+  \label{tab:phoenix-american}
+\end{table}
+
+The probability of a loss rises from 5.22\% to 9.22\% and the fair coupon from 6.04\% to 7.18\% (7.11\% with a daily
+monitoring). The American protection costs 1.14 points of coupon, against 1.99 for the Athena: the same put premium is
+spread over a larger unit coupon value.
+
+\clearpage
+\subsubsection{Non-call period}
+
+The note cannot be called during the first year; the coupons are still paid during this period.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Non-call 1 year} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & First call date (years) & 0.25 & 1 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 100.86 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.10 \\
+      & Fair coupon (\% p.a.) & 6.04 & 5.46 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 22.06 \\
+      & Probability of a capital loss (\%) & 5.22 & 8.42 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 4.92 \\
+      & Expected life (years) & 1.03 & 1.89 \\
+      & Expected number of coupons & 3.28 & 6.21 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 9.81 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Non-call period of one year (the coupons are still paid during this period).}
+  \label{tab:phoenix-noncall}
+\end{table}
+
+The note lives longer (1.89 years) and is more often exposed to the put (probability of a loss 8.42\%), but it also
+pays many more coupons (6.21 instead of 3.28): the fair coupon falls to 5.46\%. A non-call period is the way to
+guarantee the investor a minimum number of coupons.
+
+\clearpage
+\subsubsection{Unconditional coupon}
+
+With a coupon barrier at 0, the coupon is paid at every date until the call or the maturity, whatever the level of the
+index.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrr}
+    \toprule
+     & & \textbf{Base case} & \textbf{Unconditional coupon} \\
+    \midrule
+    \multirow{1}{*}{Contract}
+      & Coupon barrier (\%) & 70 & 0 \\
+    \midrule
+    \multirow{3}{*}{Pricing}
+      & Price (\% nominal) & 99.96 & 100.87 \\
+      & 95\% confidence interval ($\pm$) & 0.10 & 0.08 \\
+      & Fair coupon (\% p.a.) & 6.04 & 5.13 \\
+    \midrule
+    \multirow{6}{*}{Scenarios}
+      & Probability to reach maturity (\%) & 13.29 & 13.29 \\
+      & Probability of a capital loss (\%) & 5.22 & 5.22 \\
+      & Expected loss at maturity (\% nominal) & 3.05 & 3.05 \\
+      & Expected life (years) & 1.03 & 1.03 \\
+      & Expected number of coupons & 3.28 & 4.13 \\
+      & Expected coupon paid (\% nominal) & 5.23 & 6.19 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Unconditional coupon: the coupon is paid at every date until the call, whatever the level of the index.}
+  \label{tab:phoenix-unconditional}
+\end{table}
+
+The coupon is paid more often (4.13 coupons instead of 3.28), and the fair coupon falls to 5.13\%. The note is then a
+callable fixed-rate bond combined with the short down-and-in put, the simplest structure of the family.
+
+\clearpage
+\subsection{All the forms of the Phoenix}
+
+Table~\ref{tab:phoenix_variants} gathers all the variants of this section, sorted by fair coupon, and
+Figure~\ref{fig:fair_coupons} draws their fair coupons.
+
+\begin{table}[htbp]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+\textbf{Variant} & \textbf{Price at 6\%} & \textbf{Fair coupon} & \textbf{P(maturity)} & \textbf{P(loss)} & \textbf{E[loss]} & \textbf{E[life]} & \textbf{E[coupons]} \\
+ & & \textbf{(\% p.a.)} & \textbf{(\%)} & \textbf{(\%)} & \textbf{(\% nom.)} & \textbf{(y)} & \textbf{(number)} \\
+\midrule
+Guaranteed 100\% & 102.74 & 2.77 & 13.29 & 0.00 & 0.00 & 1.03 & 3.28 \\
+Guaranteed 90\% & 102.26 & 3.33 & 13.29 & 5.22 & 0.52 & 1.03 & 3.28 \\
+Airbag & 101.28 & 4.49 & 13.29 & 5.22 & 1.61 & 1.03 & 3.28 \\
+Unconditional coupon & 100.87 & 5.13 & 13.29 & 5.22 & 3.05 & 1.03 & 4.13 \\
+Autocall 110\% & 101.40 & 5.31 & 37.56 & 10.48 & 6.04 & 2.39 & 8.04 \\
+Non-call 1 year & 100.86 & 5.46 & 22.06 & 8.42 & 4.92 & 1.89 & 6.21 \\
+Annual observation & 100.62 & 5.63 & 25.70 & 9.06 & 5.27 & 2.06 & 1.67 \\
+Look back min 1m & 100.20 & 5.69 & 9.03 & 3.57 & 2.09 & 0.78 & 2.53 \\
+Semi-annual observation & 100.22 & 5.82 & 18.61 & 6.97 & 4.08 & 1.48 & 2.38 \\
+\textbf{Base case} & 99.96 & 6.04 & 13.29 & 5.22 & 3.05 & 1.03 & 3.28 \\
+Step-down 1\% & 99.89 & 6.16 & 8.12 & 4.44 & 2.62 & 0.87 & 2.73 \\
+Monthly observation & 99.91 & 6.19 & 7.77 & 3.13 & 1.83 & 0.59 & 5.53 \\
+Duo 90\% / 50\% & 99.89 & 6.35 & 3.13 & 1.70 & 1.01 & 0.42 & 1.37 \\
+No memory & 99.67 & 6.41 & 13.29 & 5.22 & 3.05 & 1.03 & 3.28 \\
+Daily observation & 99.94 & 6.52 & 1.80 & 0.78 & 0.46 & 0.13 & 25.97 \\
+Buffer 10\% & 99.54 & 6.55 & 13.29 & 11.81 & 3.50 & 1.03 & 3.28 \\
+American protection (daily) & 99.07 & 7.11 & 13.23 & 8.98 & 4.06 & 1.03 & 3.28 \\
+American protection & 99.00 & 7.18 & 13.29 & 9.22 & 4.11 & 1.03 & 3.28 \\
+Range accrual 80-120\% & 99.02 & 7.41 & 13.29 & 5.22 & 3.05 & 1.03 & 3.28 \\
+Protection 80\% & 98.77 & 7.45 & 13.29 & 9.57 & 4.34 & 1.03 & 3.28 \\
+Coupon barrier 90\% & 98.78 & 7.87 & 13.29 & 5.22 & 3.05 & 1.03 & 2.03 \\
+\bottomrule
+\end{tabular}}
+\caption{All the Phoenix variants of this section, sorted by fair coupon (Heston, 50{,}000 paths, coupon 6\% p.a.). Each variant changes one feature of the base case.}
+\label{tab:phoenix_variants}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{fair_coupons.png}{0.9\textwidth}
+\caption{Fair coupon of each Phoenix variant (the base case in red).}
+\label{fig:fair_coupons}
+\end{figure}
+
+\paragraph{Reading the table.}
+\begin{itemize}
+\item \emph{Capital protection.} As for the Athena, the guarantee (2.77\% at 100\%, 3.33\% at 90\%) and the airbag
+(4.49\%) reduce the loss, while the American protection (7.18\%), a higher barrier (7.45\% at 80\%) and the buffer
+(6.55\%) make it more likely.
+\item \emph{Coupon condition.} The coupon barrier, the memory and the range accrual act directly on the coupons:
+unconditional coupon 5.13\%, no memory 6.41\%, range accrual 7.41\%, coupon barrier at 90\% 7.87\%.
+\item \emph{Life of the note.} Contrary to the Athena, everything that shortens the life of the Phoenix stops its
+coupon stream: the step-down (6.16\%), the duo (6.35\%) and more frequent observations (6.52\% daily) raise the fair
+coupon, while a higher autocall barrier (5.31\% at 110\%) and a non-call period (5.46\%) lower it.
+\end{itemize}
+
+\begin{figure}[h]
+\centering
+\figfile{redemption_profiles.png}{0.8\textwidth}
+\caption{Redemption at maturity of a Phoenix never called: standard, airbag, buffer and capital guaranteed at 90\%.}
+\label{fig:redemption_profiles}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\figfile{call_probabilities_features.png}{0.9\textwidth}
+\caption{Probability of a call at each observation date: base case, step-down, duo and autocall barrier at 110\%.}
+\label{fig:call_probabilities_features}
+\end{figure}
+
+\clearpage
 \subsection{Greeks}
-Table~\ref{tab:phoenix_greeks} gives the Greeks of five Phoenix variants.
+Table~\ref{tab:phoenix_greeks} gives the Greeks of six Phoenix variants (nominal 100, coupon 6\%). Gamma and Volga
+are not significant at this number of paths (base case: Gamma $-1.2 \times 10^{-6} \pm 4.3 \times 10^{-6}$, Volga
+$-0.005 \pm 0.024$); the base case standard errors are 0.00017 on the Delta, 0.012 on the Vega, 0.044 on the Rho and
+on the Dividend, and 0.0014 on the Theta.
 
 \begin{table}[h]
 \centering
@@ -674,24 +1517,26 @@ Table~\ref{tab:phoenix_greeks} gives the Greeks of five Phoenix variants.
 \textbf{Phoenix} & \textbf{Price} & \textbf{Delta} & \textbf{Delta 1\%} & \textbf{Vega} & \textbf{Vanna} & \textbf{Rho} & \textbf{Dividend} & \textbf{Theta} \\
  & & (per point) & (per 1\% move) & (per vol pt) & ($\times 10^{4}$) & (per 1\%) & (per 1\%) & (per day) \\
 \midrule
-Base & 99.96 & 0.00059 & 0.047 & $-0.335$ & 6.13 & $-0.599$ & $-0.325$ & 0.0050 \\
-No memory & 99.67 & 0.00106 & 0.085 & $-0.365$ & 6.27 & $-0.560$ & $-0.357$ & 0.0053 \\
+Base case & 99.96 & 0.00059 & 0.047 & $-0.335$ & 6.13 & $-0.599$ & $-0.325$ & 0.0050 \\
 American protection & 99.00 & 0.00229 & 0.184 & $-0.394$ & 5.72 & $-0.448$ & $-0.437$ & 0.0039 \\
+Step-down 1\% & 99.89 & 0.00046 & 0.037 & $-0.270$ & 3.37 & $-0.579$ & $-0.198$ & 0.0032 \\
 Airbag & 101.28 & $-0.00151$ & $-0.121$ & $-0.224$ & 5.38 & $-0.875$ & $-0.101$ & 0.0026 \\
-Unconditional coupon & 100.87 & $-0.00077$ & $-0.062$ & $-0.253$ & 5.67 & $-0.745$ & $-0.202$ & 0.0048 \\
+Guaranteed 90\% & 102.26 & $-0.00297$ & $-0.239$ & $-0.086$ & 4.37 & $-1.073$ & 0.057 & 0.0021 \\
+No memory & 99.67 & 0.00106 & 0.085 & $-0.365$ & 6.27 & $-0.560$ & $-0.357$ & 0.0053 \\
 \bottomrule
 \end{tabular}}
-\caption{Greeks of Phoenix variants (nominal 100, coupon 6\%). Base case standard errors: Delta 0.00017, Vega 0.012,
-Vanna $0.8 \times 10^{-4}$, Rho 0.044, Dividend 0.044, Theta 0.0014; Gamma and Volga are not significant.}
+\caption{Greeks of Phoenix variants (nominal 100, coupon 6\%).}
 \label{tab:phoenix_greeks}
 \end{table}
 
-The Phoenix is almost Delta-neutral at the money (0.047 for a 1\% move against 0.41 for the Athena): a rise of the
-index makes the coupons more likely but also calls the note earlier, which stops a coupon stream priced above par.
-When the coupon is well above its fair level, the second effect dominates and the Delta becomes negative (airbag
-and unconditional coupon, whose prices are 101.3 and 100.9). The Phoenix is short volatility ($-0.33$ per vol
-point) and short dividends ($-0.32$ per point, a third of the Athena): its coupons are paid on a shorter horizon,
-so the forward matters less. Figures~\ref{fig:phoenix_greeks} and~\ref{fig:phoenix_profiles} display the Greeks.
+The Phoenix is almost delta-neutral at the money (0.047 for a 1\% move against 0.378 for the Athena): a rise of the
+index reduces the short put, but it also calls the note earlier, which stops a coupon stream worth more than its cost.
+When the put is reduced (airbag) or mostly removed (guaranteed 90\%), the second effect wins and the delta becomes
+negative. For the same reason, the guaranteed note has a positive dividend exposure: a higher dividend yield delays
+the call and adds coupons, and this outweighs the small put that is left. The Phoenix is short volatility ($-0.33$ per
+vol point, close to the Athena), short dividends ($-0.32$ per point, half of the Athena) and much more exposed to the
+rates ($-0.60$ per point against $-0.21$), since it pays a regular coupon stream. Without memory, the note is more
+sensitive to the spot and to the volatility, since its coupons depend more on the level of each date.
 
 \begin{figure}[h]
 \centering
@@ -700,46 +1545,66 @@ so the forward matters less. Figures~\ref{fig:phoenix_greeks} and~\ref{fig:phoen
 \label{fig:phoenix_greeks}
 \end{figure}
 
-\begin{figure}[h]
-\centering
-\figfile{phoenix_profiles.png}{\textwidth}
-\caption{Phoenix: price and Greeks as functions of the spot (30{,}000 paths, spot step 400).}
-\label{fig:phoenix_profiles}
-\end{figure}
-
-\paragraph{Sensitivities to the Heston parameters.} The base Phoenix has $\partial V/\partial v_0 = -40.4$,
-$\partial V/\partial \theta = -44.9$, $\partial V/\partial \kappa = -0.19$, $\partial V/\partial \xi = 1.36$ and
-$\partial V/\partial \rho = 0.87$: 58\% to 65\% of the Athena exposures to the variance level.
+\paragraph{Sensitivities to the Heston parameters.} Per unit of parameter, the base Phoenix has
+$\partial V/\partial v_0 = -40.4 \pm 12.2$ and $\partial V/\partial \theta = -44.9 \pm 7.4$, while
+$\partial V/\partial \kappa = -0.19 \pm 0.21$, $\partial V/\partial \xi = 1.4 \pm 1.0$ and
+$\partial V/\partial \rho = 0.9 \pm 0.7$ are not significant at this number of paths. Contrary to the Athena, which
+depends mostly on the initial variance $v_0$, the Phoenix is as sensitive to the long-term variance $\theta$: its coupon
+stream lasts longer than the single coupon of the Athena. The sensitivity to $\rho$, not significant for a small bump,
+is clear over the wider range of the skew scenarios above.
 
 % ==================================================================
 \section{Phoenix versus Athena}\label{sec:comparison}
 % ==================================================================
+The two notes of this report and of its companion \cite{benguedda2026athena} share the same dates, the same
+autocall barrier and the same protection: they have the same call dates, the same put and the same zero-coupon part
+$A$, and only differ by the way the coupon is paid. Table~\ref{tab:comparison} compares them.
+
 \begin{table}[h]
 \centering
+\small
 \begin{tabular}{@{}lrr@{}}
 \toprule
  & \textbf{Athena} & \textbf{Phoenix} \\
- & (annual, snowball) & (quarterly, memory, CB 70\%) \\
+ & (snowball) & (memory, CB 70\%) \\
 \midrule
-Fair coupon (\% p.a.) & 9.41 & 6.04 \\
-Probability of a call at the first date (\%) & 55.69 & 55.43 \\
-Expected life (years) & 2.06 & 1.03 \\
-Probability of a capital loss (\%) & 9.06 & 5.22 \\
-Expected loss (\% of nominal) & 5.27 & 3.05 \\
-Delta (per 1\% move) & 0.407 & 0.047 \\
-Vega (per vol point) & $-0.549$ & $-0.335$ \\
-Dividend (per 1\% of carry) & $-1.115$ & $-0.325$ \\
+Fair coupon (\% p.a.) & 10.54 & 6.04 \\
+Probability of a call at the first date (\%) & 55.43 & 55.43 \\
+Expected life (years) & 1.03 & 1.03 \\
+Probability of a capital loss (\%) & 5.22 & 5.22 \\
+Expected loss (\% of nominal) & 3.05 & 3.05 \\
+Expected coupon paid at 6\% (\% of nominal) & 3.01 & 5.23 \\
+\midrule
+Delta (per 1\% move) & 0.378 & 0.047 \\
+Vega (per vol point) & $-0.315$ & $-0.335$ \\
+Rho (per 1\%) & $-0.210$ & $-0.599$ \\
+Dividend (per 1\% of carry) & $-0.689$ & $-0.325$ \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Fair coupon (\% p.a.) of some variants}} \\
+Autocall barrier 110\% & 12.69 & 5.31 \\
+Step-down 1\% & 8.24 & 6.16 \\
+Duo 90\% / 50\% & 8.86 & 6.35 \\
+Non-call 1 year & 8.94 & 5.46 \\
+Daily observation & 11.74 & 6.52 \\
+Range accrual 80--120\% & 10.99 & 7.41 \\
+American protection & 12.53 & 7.18 \\
+Rates $-1\%$ / $+1\%$ & 9.95 / 11.16 & 5.30 / 6.82 \\
+Correlation $\rho = -0.9$ / $0$ & 10.51 / 10.33 & 6.40 / 5.18 \\
 \bottomrule
 \end{tabular}
-\caption{Base cases compared (European protection at 60\%, autocall at 100\%, 4 years); Athena figures from the
-companion report \cite{benguedda2026athena}.}
+\caption{Base cases compared (4 years, quarterly observations, autocall at 100\%, European protection at 60\%, same
+paths); Athena figures from the companion report \cite{benguedda2026athena}.}
 \label{tab:comparison}
 \end{table}
 
-The Athena concentrates its coupons in the scenarios where the index is up, which is why its fair coupon is higher
-and its Delta almost nine times larger; the Phoenix pays regularly as long as the index stays above 70\%, a more stable
-income for a lower rate. With the same quarterly dates, the snowball Athena and the memory Phoenix with
-$B^{\mathrm{cpn}} = B^{\mathrm{call}}$ have the same fair coupon (10.54\%), which is the identity of
+The Athena concentrates its coupon in the scenarios where the index is up at an observation date: its fair coupon is
+higher, its delta eight times larger, and its value depends on the timing of the call, a later call paying a larger
+snowball coupon. The Phoenix pays regularly as long as the index stays above 70\%: it is a stream of conditional
+coupons, more stable for the investor and worth more per point of coupon. Everything that lengthens the life of the
+note works in its favour: a higher autocall barrier or a non-call period lower its fair coupon, a step-down, a duo or
+more frequent observations raise it, whereas they lower the Athena coupon. The Phoenix is also short skew and much
+more exposed to the rates, while the Athena is more exposed to the spot and to the dividends. With a coupon barrier
+equal to the autocall barrier and memory, the two products coincide (10.54\%), which is the identity of
 Section~\ref{sec:products}.
 
 % ==================================================================
@@ -749,14 +1614,17 @@ Section~\ref{sec:products}.
 \subsection{Code}
 \begin{itemize}
 \item \code{Products/Phoenix/phoenix.py}: the self-contained class \code{Phoenix} (contract, \code{path\_payoff},
-\code{fair\_coupon}, \code{statistics});
+\code{fair\_coupon}, \code{statistics}, and \code{features} / \code{report} for one table with the terms, the
+pricing and the scenarios);
 \item \code{Equity\_Models/monte\_carlo.py}: \code{MonteCarloPricer}, which simulates the paths and calls
 \code{path\_payoff} for products with several cash flows;
 \item \code{Equity\_Models/Heston.py}, \code{Equity\_Models/forward\_curve.py}: calibrated model and forward curve;
 \item \code{Equity\_Models/greeks.py}: Greeks with common random numbers, including the Dividend Greek;
 \item \code{Products/market.py}: CAC40 market data and calibrated Heston model (\code{cac40\_heston});
 \item \code{Products/notes\_analysis.py}: comparison of variants and plots;
-\item notebook \code{Products/Phoenix/phoenix\_pricer.ipynb}.
+\item notebooks \code{Products/Phoenix/phoenix\_pricer.ipynb} and\\
+\code{Products/Phoenix/phoenix\_synthetic\_pricing.ipynb} (every number of Section~\ref{sec:phoenix});
+\item \code{Reports/Phoenix/make\_figures.py}: extracts the figures of this report from the executed notebook.
 \end{itemize}
 
 \begin{lstlisting}
@@ -771,7 +1639,7 @@ note = Phoenix(4.0, mkt.S0, 0.06, coupon_barrier=0.7, memory=True, frequency=0.2
                autocall_barrier=1.0, protection_barrier=0.6, protection_type="european")
 print(pricer.price(mkt.heston, note))              # price and standard error
 print(note.fair_coupon(pricer, mkt.heston))        # coupon p.a. at par
-print(note.statistics(pricer, mkt.heston))         # call probabilities, loss, life, coupons
+print(note.report(pricer, mkt.heston))             # terms, pricing and scenario statistics
 print(Greeks(pricer).compute(mkt.heston, note, Greeks.ORDER))
 \end{lstlisting}
 
@@ -779,10 +1647,10 @@ print(Greeks(pricer).compute(mkt.heston, note, Greeks.ORDER))
 With $N$ paths and $M$ steps, the simulation costs $\mathcal{O}(NM)$ in time and stores $S$ and $v$, i.e.
 $16(M+1)N$ bytes: 167 MB for $N = 50{,}000$ and the weekly grid of 4 years, 807 MB on a daily grid. Following the
 note through its $n$ observation dates costs $\mathcal{O}(nN)$, the American continuous protection
-$\mathcal{O}(NM)$. Measured times (one CPU core): 0.30 s for a valuation including the simulation; 0.02 to 0.12 s
-for the price, the fair coupon and the statistics of a variant on cached paths (1.5 s with an American
-protection); 26 s for the eight Greeks of five notes (14 valuations each); 41 to 44 s for the spot profiles of
-four notes (16 spots $\times$ 6 scenarios, 30{,}000 paths).
+$\mathcal{O}(NM)$. Measured times (one CPU core): about 0.3 s for a valuation including the simulation, and a few hundredths of
+a second for the price, the fair coupon and the statistics of a variant on cached paths. The whole notebook
+\code{phoenix\_synthetic\_pricing.ipynb} (calibration, 20 variants, 3 barrier sweeps, 6 market sweeps, the Greeks of
+six notes and a spot profile) runs in about 1.5 minutes.
 
 % ==================================================================
 \section{Limitations and Next Steps}\label{sec:limitations}
@@ -793,8 +1661,8 @@ a multi-asset model and a correlation calibration.
 \item \emph{Model.} The value of an autocall depends on the forward skew and on the joint dynamics of spot and
 volatility between observation dates; a pure Heston model with constant parameters is not the market standard,
 which is a local stochastic volatility model calibrated to the whole surface \cite{bergomi2016}.
-\item \emph{Fair coupon.} It prices the note at par without issuer margin, funding spread or issuer credit risk; a
-real issue price is below par by the margin.
+\item \emph{Fair coupon.} It prices the note at par without issuer margin; the credit spread of the issuer is only
+studied as a parallel discounting spread, without default modelling. A real issue price is below par by the margin.
 \item \emph{Discretisation.} Euler full truncation with the Feller condition violated ($2\kappa\theta/\xi^2 = 0.49$),
 weekly grid with the variance frozen over each week for the Brownian bridge.
 \item \emph{Greeks.} Gamma and Volga are not significant with 50{,}000 paths: the payoff jumps at the coupon,
@@ -808,12 +1676,15 @@ discrete dividends and to dividend risk, which the Dividend Greek only measures 
 % ==================================================================
 A single parametrisation covers the Phoenix with all its usual features, and a Monte Carlo pricer under a calibrated
 Heston model recovers two exact limit cases within one standard error and the exact identity with the snowball
-Athena. On the CAC40 of 12 February 2025, the base 4-year Phoenix pays 6.04\% a year; its zero-coupon part is the
-same as the Athena one, and its lower coupon only reflects that a unit coupon is worth 1.75 times more. The coupon
-barrier and the protection are the main drivers of the fair coupon, the memory is worth 0.37 point at a barrier of
-70\%, and everything that shortens the life of the note (more frequent observations, step-down) raises the fair
-coupon. The note is almost Delta-neutral at the money, short volatility and short dividends, a third of the Athena on
-dividends.
+Athena. On the CAC40 of 12 February 2025, the base 4-year quarterly Phoenix has a fair coupon of 6.04\% a year; its
+zero-coupon part is the same as the Athena one, and its lower coupon only reflects that a unit coupon is worth 1.75
+times more. The protection and the coupon condition (barrier, memory, range accrual) are the main drivers of the fair
+coupon, as for the Athena. But the Phoenix investor is long a stream of conditional coupons whose value grows with
+the life of the note: everything that shortens it (step-down, duo, more frequent observations) raises the fair
+coupon, everything that lengthens it (higher autocall barrier, non-call period) lowers it, the opposite of the Athena.
+The note is almost delta-neutral at the money, short volatility, short skew, short dividends (half of the Athena)
+and three times more exposed to the rates; for the issuer, the delta to buy grows from almost nothing to 0.02 per
+point when the index falls to the protection barrier.
 
 % ==================================================================
 \appendix
@@ -830,7 +1701,7 @@ $P_k = S_{t_k}/\Sref$ & Performance at $t_k$ \\
 $B^{\mathrm{call}}_k$, $B^{\mathrm{cpn}}_k$, $B^{\mathrm{prot}}$ & Autocall, coupon and protection barriers (fractions of $\Sref$) \\
 $m_i$ & Number of coupon periods paid at $t_i$ (memory) \\
 $c$, $c^\star$ & Coupon rate per annum, fair coupon \\
-$K_{\mathrm{put}}$, $\phi$ & Strike of the short put, capital floor \\
+$K_{\mathrm{put}}$, $\phi$, $b$ & Strike of the short put, capital floor, buffer \\
 $\tau$ & Call date \\
 $\ind_{\mathrm{KI}}$ & Knock-in event of the protection \\
 \bottomrule
