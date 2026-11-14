@@ -1,0 +1,380 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------------------------------------------------------------
+% Packages
+% ---------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage[expansion=false]{microtype}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{textcomp}
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, citecolor=blue!50!black, urlcolor=blue!50!black}
+
+\graphicspath{{figures/}}
+\setlength{\emergencystretch}{2em}
+
+\lstdefinestyle{pystyle}{
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{teal},
+    showstringspaces=false,
+    breaklines=true,
+    frame=single,
+    tabsize=4
+}
+
+% ---------------------------------------------------------------
+% Theorem environments and macros
+% ---------------------------------------------------------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\F}{\mathcal{F}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\bp}{\,\mathrm{bp}}
+\newcommand{\eur}{\text{\texteuro}}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+
+% Skeleton marker: remove once every section is written
+\newcommand{\todo}[1]{\textcolor{red!70!black}{\textbf{[TODO]} #1}}
+
+\title{\textbf{Constant Maturity Swap Rates:\\
+Two-Factor Hull--White, Quasi-Gaussian and SABR-LMM Models\\
+for the Pricing of a CMS Steepener}}
+\author{\textbf{Elias Benguedda}}
+\date{November 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\todo{Write last. One paragraph: what a CMS rate is, why its expectation under the payment measure differs from the forward swap rate (convexity adjustment), why a steepener needs a model with imperfect correlation between the 2y and 10y swap rates, the three model families studied (G2++, multi-factor Cheyette with local/stochastic volatility, SABR-LMM), the data used (\texttt{EUR\_SWAP\_RATES}) and the headline numbers (convexity adjustments, steepener prices across models, calibration errors).} This paper is linked to my GitHub, which can be found on my portfolio\footnote{\url{https://portfolio-eliasbenguedda.fr}}, and all scripts are available in the same repository.
+\end{abstract}
+
+\clearpage
+
+\tableofcontents
+\newpage
+
+% ===============================================================
+\section{Introduction}
+\label{sec:intro}
+% ===============================================================
+
+\subsection{Motivation}
+\todo{CMS-linked products (CMS swaps, CMS caps/floors, CMS spread options, steepener notes, range accruals on CMS spreads) are among the most traded rate exotics in EUR. Their payoff depends on a swap rate observed in the future and paid at a date unrelated to the swap's natural annuity: a linear payoff in the rate is not linear in the model.}
+
+\subsection{The two modelling questions}
+\begin{enumerate}
+    \item \textbf{Convexity}: the value of a single CMS rate depends on the smile of swaptions of the same tenor (static replication).
+    \item \textbf{Correlation}: the value of a CMS spread (steepener) depends on the joint dynamics of two swap rates, so it needs a model with at least two factors.
+\end{enumerate}
+\todo{Explain why a one-factor model (the HW1F model of the companion report) gives near-perfect correlation of the 2y and 10y rates and therefore misprices spread options.}
+
+\subsection{Organization of the paper}
+\todo{Write once the structure is final.}
+
+\clearpage
+% ===============================================================
+\section{Preliminaries and Notation}
+\label{sec:prelim}
+% ===============================================================
+
+\subsection{Discount curve, forward rates and measures}
+\todo{$P(t,T)$, bank account, $\Q$, $T$-forward measure $\Q^T$, change of numeraire. Multi-curve remark: €STR discounting vs EURIBOR 6M projection, and which one is used here (see Section~\ref{sec:data}).}
+
+\subsection{Par swap rate and annuity}
+For a swap starting at $T_0$ with fixed dates $T_1<\dots<T_n$ and accrual fractions $\tau_i$,
+\begin{equation}
+    A(t) = \sum_{i=1}^{n}\tau_i P(t,T_i), \qquad
+    S(t) = S(t;T_0,T_n) = \frac{P(t,T_0)-P(t,T_n)}{A(t)}.
+    \label{eq:swap-rate}
+\end{equation}
+Under the annuity (swap) measure $\Q^A$, $S(t)$ is a martingale.
+
+\subsection{Swaptions and the Bachelier formula}
+\todo{Payer swaption $= A(0)\,\E^A[(S(T_0)-K)^+]$; Bachelier price with normal volatility $\sigma_N$; why normal vols are quoted in EUR (negative rates 2015--2021).}
+
+\clearpage
+% ===============================================================
+\section{Constant Maturity Swap Rates}
+\label{sec:cms}
+% ===============================================================
+
+\subsection{Definition}
+\begin{definition}[CMS rate]
+The $n$-year CMS rate fixing at $T$ is the par swap rate $S_n(T)=S(T;T,T+n)$ of a spot-starting swap of tenor $n$ observed at $T$. In EUR it is fixed daily by ICE Benchmark Administration (\emph{ICE Swap Rate}) against EURIBOR 6M.
+\end{definition}
+\todo{Market conventions: fixing time, annual 30/360 fixed leg, 6M floating leg, fixing lag, payment in arrears/in advance.}
+
+\subsection{CMS products}
+\todo{CMS swap, CMS caplet/floorlet, CMS spread option, CMS steepener note. Give the steepener payoff used in this paper:}
+\begin{equation}
+    \text{Coupon}_k = \tau_k\,\min\Bigl(\max\bigl(L\,(S_{10}(T_k)-S_{2}(T_k)) + m,\ \text{floor}\bigr),\ \text{cap}\Bigr).
+    \label{eq:steepener}
+\end{equation}
+\todo{Fix the term sheet: notional, maturity, leverage $L$, margin $m$, floor, cap, fixing in advance/in arrears.}
+
+\subsection{The CMS convexity adjustment}
+A CMS coupon paid at $T_p$ is valued under $\Q^{T_p}$, under which $S$ is \emph{not} a martingale:
+\begin{equation}
+    \E^{T_p}[S(T)] = \frac{A(0)}{P(0,T_p)}\,\E^{A}\Bigl[S(T)\,\frac{P(T,T_p)}{A(T)}\Bigr] \neq S(0).
+    \label{eq:cms-convexity}
+\end{equation}
+\todo{Interpretation: the ratio $P(T,T_p)/A(T)$ is increasing in $S$, so the adjustment is positive and grows with volatility, maturity and tenor.}
+
+\subsection{Static replication}
+\todo{Write $P(T,T_p)/A(T)\approx G(S(T))$ (annuity mapping function), then use Carr--Madan to express a CMS caplet as a strip of payer swaptions:}
+\begin{equation}
+    \text{CMS caplet}(K) = G(K)\,\text{Swpt}(K) + \int_K^\infty \bigl[(S-K)G(S)\bigr]''\,\text{Swpt}(S)\,\dd S .
+    \label{eq:replication}
+\end{equation}
+\todo{Annuity mappings: Hagan's standard model, the linear terminal swap rate (TSR) model. Requires a smile extrapolation (SABR) for large strikes.}
+
+\subsection{Closed-form approximations}
+\todo{Hagan's approximation with flat Black/Bachelier vol; timing adjustment when $T_p\neq T$. Numerical comparison with replication in Section~\ref{sec:numerics}.}
+
+\subsection{Why the spread needs a correlation model}
+\todo{The convexity adjustment only depends on marginal smiles, but the spread option depends on the copula of $(S_{10},S_{2})$. Bachelier spread formula with correlation $\rho$; sensitivity of the steepener to $\rho$.}
+
+\clearpage
+% ===============================================================
+\section{Data}
+\label{sec:data}
+% ===============================================================
+
+\subsection{The \texttt{EUR\_SWAP\_RATES} dataset}
+The file \texttt{Data/EUR/EUR\_SWAP\_RATES.csv} contains daily EUR par swap rates, in percent, for the tenors 1y--12y, 15y, 20y, 25y, 30y, 35y, 40y, 45y and 50y, from 1 January 2000 to 18 August 2022 (8\,266 rows).
+\todo{Confirm the conventions (fixed leg annual 30/360 against EURIBOR 6M?) and the source.}
+\todo{Cleaning: drop weekend/holiday rows (e.g.\ 1--2 January 2000 duplicate the last fixing), handle missing tenors (11y and 35y--50y are empty in the early years), choose a pricing date.}
+
+\subsection{What the dataset allows and what it does not}
+\begin{remark}[Data limitation]
+\label{rem:data}
+The dataset contains \textbf{swap rates only}. It gives:
+\begin{itemize}
+    \item the initial EUR curve on any date (bootstrap of discount factors from par rates, single-curve, or with €STR discounting using \texttt{ESTR\_Fixings.csv} after October 2019);
+    \item the \emph{historical} dynamics of the curve: principal components, realised normal volatilities of each CMS tenor, and the historical correlation of $S_2$ and $S_{10}$ and of their changes.
+\end{itemize}
+It does \textbf{not} contain swaption or cap volatilities, so the risk-neutral volatility parameters (G2++ $\sigma,\eta,\rho$; Cheyette local/stochastic volatility; SABR $\alpha,\beta,\rho,\nu$ and LMM correlations) cannot be calibrated to market prices from this dataset alone. They must be either (a) calibrated to \emph{illustrative} swaption volatilities, as in the Hull--White one-factor report, or (b) estimated under the historical measure from the time series. Every number in the paper states which choice is used.
+\end{remark}
+\todo{Decide between (a), (b) or both. Option (b) is a legitimate approach for correlation (the parameter the market quotes least), less so for volatility levels.}
+
+\subsection{Exploratory analysis}
+\todo{Figures: history of $S_2$, $S_{10}$ and $S_{10}-S_2$ since 2000; rolling realised normal vol; rolling correlation of daily changes; PCA of daily changes (level, slope, curvature) and explained variance. The PCA motivates the number of factors.}
+
+\clearpage
+% ===============================================================
+\section{The Two-Factor Hull--White Model (G2++)}
+\label{sec:g2}
+% ===============================================================
+
+\subsection{Definition}
+\begin{equation}
+    r(t) = x(t)+y(t)+\varphi(t),\qquad
+    \begin{aligned}
+        \dd x &= -a\,x\,\dd t + \sigma\,\dd W_1,\\
+        \dd y &= -b\,y\,\dd t + \eta\,\dd W_2,
+    \end{aligned}\qquad \dd\langle W_1,W_2\rangle_t=\rho\,\dd t.
+    \label{eq:g2}
+\end{equation}
+\todo{Link with the HW2F parametrisation (Hull--White 1994) and with the PCA of Section~\ref{sec:data}.}
+
+\subsection{Fit to the initial curve and bond prices}
+\todo{$\varphi(t)$ in closed form; affine bond price $P(t,T)=\frac{P(0,T)}{P(0,t)}\exp(\mathcal{A}(t,T)-B_a(t,T)x(t)-B_b(t,T)y(t))$.}
+
+\subsection{Instantaneous correlation of swap rates}
+\todo{Derive the instantaneous correlation of two forward rates (or swap rates) as a function of $a,b,\rho$. Show that it can go well below 1, unlike HW1F, which is the reason to use the model for a steepener.}
+
+\subsection{Swaption pricing}
+\todo{Brigo--Mercurio one-dimensional integral; or swap-rate normal-vol approximation by freezing the weights.}
+
+\subsection{CMS and CMS spread pricing}
+\todo{Monte Carlo with exact simulation of $(x,y,\int r)$; $S_n(T)$ computed from the affine bond formula, so no inner simulation. Compare the convexity adjustment with the replication of Section~\ref{sec:cms}.}
+
+\subsection{Calibration}
+\todo{Parameters to calibrate: $(a,b,\sigma,\eta,\rho)$. Calibration targets: swaptions on the 2y and 10y tenors (illustrative vols) and/or the historical correlation of $\Delta S_2,\Delta S_{10}$. Known issue: $\rho$ close to $-1$ and degeneracy between factors.}
+
+\subsection{Limitations}
+\todo{Gaussian rates, no smile, so CMS convexity is driven by a flat normal vol; the correlation structure is rigid in time.}
+
+\clearpage
+% ===============================================================
+\section{Multi-Factor Quasi-Gaussian (Cheyette) Models}
+\label{sec:cheyette}
+% ===============================================================
+
+\subsection{From HJM to a Markovian representation}
+\todo{HJM with separable volatility $\sigma_f(t,T)=h(T)^\top g(t,\cdot)$; Ritchken--Sankarasubramanian / Cheyette condition; state variables $x(t)\in\R^d$, $Y(t)\in\R^{d\times d}$.}
+
+\subsection{The $d$-factor quasi-Gaussian model}
+With a diagonal mean-reversion matrix $\kappa$ and $G(t,T)=\int_t^T e^{-\kappa(u-t)}\mathbf{1}\,\dd u$,
+\begin{align}
+    \dd x(t) &= \bigl(Y(t)\mathbf{1} - \kappa\,x(t)\bigr)\,\dd t + \sigma_r(t,x)^\top \dd W(t),\\
+    \dd Y(t) &= \bigl(\sigma_r^\top\sigma_r - \kappa Y - Y\kappa\bigr)\,\dd t,\\
+    P(t,T) &= \frac{P(0,T)}{P(0,t)}\exp\Bigl(-G(t,T)^\top x(t) - \tfrac12 G(t,T)^\top Y(t)\,G(t,T)\Bigr).
+\end{align}
+\todo{Check the formulas against Andersen--Piterbarg, Vol.~II, Ch.~13.}
+
+\subsection{Local volatility specification}
+\todo{Linear local volatility in the swap rate (displaced diffusion): $\sigma_r(t,x)=\lambda(t)\bigl(\alpha + \beta\,(S(t,x)-S(0))\bigr)$; controls the skew.}
+
+\subsection{Stochastic volatility specification}
+\todo{Multiply by $\sqrt{z(t)}$ with $\dd z=\theta(1-z)\dd t+\eta\sqrt{z}\,\dd Z$; controls the curvature of the smile.}
+
+\subsection{Swaption pricing by Markovian projection}
+\todo{Swap rate dynamics in the model, freezing the swap-rate gradient, projection onto a displaced Heston model for $S$ (Piterbarg); this gives the fast calibration. Not implemented: the repository calibrates the smile parameters by Monte Carlo with common random numbers, on top of the G2++ Gaussian core. State this and its cost.}
+
+\subsection{Numerical methods}
+\todo{Monte Carlo (Euler with $Y$ integrated deterministically for the local-vol case) and PDE for $d\leq2$. CMS rates directly from the bond formula.}
+
+\subsection{Calibration}
+\todo{Per-expiry calibration of $\lambda(t)$ (level), $\beta$ (skew), $\eta$ (curvature); correlation between factors from the PCA or historical CMS correlation.}
+
+\subsection{Limitations}
+\todo{Approximate calibration, numerical cost, factor correlation still parametric.}
+
+\clearpage
+% ===============================================================
+\section{The LIBOR Market Model and SABR-LMM}
+\label{sec:lmm}
+% ===============================================================
+
+\subsection{Forward rate dynamics}
+\todo{Simply compounded forwards $F_i(t)=F(t;T_{i-1},T_i)$ on the EURIBOR 6M grid; dynamics under the spot LIBOR measure:}
+\begin{equation}
+    \dd F_i(t) = \sigma_i(t)\,\phi(F_i)\sum_{j=q(t)}^{i}\frac{\tau_j\,\rho_{ij}\,\sigma_j(t)\,\phi(F_j)}{1+\tau_jF_j(t)}\,\dd t + \sigma_i(t)\,\phi(F_i)\,\dd W_i(t).
+\end{equation}
+\todo{$\phi(F)=F+\delta$ (shifted lognormal) because of negative EUR rates.}
+
+\subsection{Volatility and correlation parametrisation}
+\todo{Rebonato's $abcd$ form $\sigma_i(t)=\bigl(a+b(T_i-t)\bigr)e^{-c(T_i-t)}+d$; correlation $\rho_{ij}=\rho_\infty+(1-\rho_\infty)e^{-\beta|T_i-T_j|}$; factor reduction by PCA of the correlation matrix.}
+
+\subsection{Swap rates as baskets of forwards}
+\todo{$S(t)=\sum_i w_i(t)F_i(t)$; Rebonato's frozen-weight approximation of the swaption volatility; this gives the calibration to swaptions and the correlation of CMS rates.}
+
+\subsection{SABR for each forward}
+\begin{equation}
+    \dd F = \alpha\,(F+\delta)^{\beta}\,\dd W,\qquad \dd\alpha = \nu\,\alpha\,\dd Z,\qquad \dd\langle W,Z\rangle=\rho\,\dd t.
+\end{equation}
+\todo{Hagan's implied vol expansion (normal-vol version); shifted SABR; arbitrage at low strikes and its relevance for CMS replication.}
+
+\subsection{SABR-LMM}
+\todo{Rebonato--McKay--White or Mercurio--Morini version: one stochastic volatility per forward or a common volatility factor, correlation between forwards and volatilities, drift corrections. Choose one and justify.}
+
+\subsection{Simulation and pricing of CMS rates}
+\todo{Predictor--corrector or log-Euler on the forwards; CMS rates at each fixing are computed from the simulated forwards; cost, variance reduction (control variate with the replicated CMS rate).}
+
+\subsection{Calibration}
+\todo{Two steps: SABR per swaption expiry/tenor (smile), then LMM $abcd$ and correlation to the ATM matrix and to the CMS correlation target.}
+
+\subsection{Limitations}
+\todo{High dimension, slow Monte Carlo, calibration instability, approximate swaption formulas.}
+
+\clearpage
+% ===============================================================
+\section{Pricing the CMS Steepener}
+\label{sec:numerics}
+% ===============================================================
+\todo{State clearly the pricing date, the curve, and the origin of the volatility inputs (Remark~\ref{rem:data}).}
+
+\subsection{Convexity adjustments}
+\todo{Table: CMS 2y and 10y convexity adjustments by fixing date, from replication, Hagan's formula, G2++, Cheyette and SABR-LMM.}
+
+\subsection{Correlation implied by each model}
+\todo{Figure: terminal correlation of $S_2$ and $S_{10}$ as a function of fixing date for each model, against the historical rolling correlation.}
+
+\subsection{Steepener prices}
+\begin{table}[htbp]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Model & Price (\% notional) & MC std.\ error & Run time \\
+\midrule
+Bachelier spread (flat $\rho$) & -- & -- & -- \\
+G2++ & -- & -- & -- \\
+Cheyette local vol & -- & -- & -- \\
+Cheyette stochastic vol & -- & -- & -- \\
+SABR-LMM & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\caption{\todo{Fill in.} Steepener of~\eqref{eq:steepener}.}
+\label{tab:prices}
+\end{table}
+
+\subsection{Sensitivities}
+\todo{Delta to curve level and slope, vega, sensitivity to correlation, fair margin $m$ or fair leverage $L$.}
+
+\clearpage
+% ===============================================================
+\section{Comparison of the Models}
+\label{sec:comparison}
+% ===============================================================
+\todo{Table: factors, smile, correlation control, calibration speed, pricing speed, suitability for callables (Bermudan steepener). Discussion of which model a desk would use for which product.}
+
+\section{Conclusion}
+\label{sec:conclusion}
+\todo{Write last.}
+
+\clearpage
+\appendix
+% ===============================================================
+\section{Proofs}
+\label{app:proofs}
+% ===============================================================
+\todo{Measure change~\eqref{eq:cms-convexity}; replication formula~\eqref{eq:replication}; G2++ bond price; quasi-Gaussian bond reconstruction formula.}
+
+\section{Implementation}
+\label{app:code}
+\begin{itemize}
+    \item \texttt{Fixed\_Income\_Models/sabr.py}: normal and shifted SABR smile (\texttt{SABR}).
+    \item \texttt{Fixed\_Income\_Models/cms.py}: forward swap rates, linear-TSR static replication (\texttt{CMSReplication}), swap rates and swaption smiles from any simulation model.
+    \item \texttt{Fixed\_Income\_Models/hull\_white\_2F.py}: G2++ (\texttt{G2pp}), exact simulation, frozen-gradient swaption vols and correlations, calibration.
+    \item \texttt{Fixed\_Income\_Models/cheyette.py}: $d$-factor quasi-Gaussian model with local and stochastic volatility (\texttt{QuasiGaussian}), Euler Monte Carlo, smile calibration.
+    \item \texttt{Fixed\_Income\_Models/lmm.py}: SABR-LMM (\texttt{SABRLMM}), spot-measure predictor--corrector simulation, Rebonato calibration.
+    \item \texttt{Products/Steepener\_CMS/eur\_swap\_market.py}: data, curve, historical statistics, volatility proxies.
+    \item \texttt{Products/Steepener\_CMS/steepener\_cms.py}: the note, the replication + Gaussian spread pricer, the model-agnostic Monte Carlo pricer, the fair margin.
+    \item \texttt{Products/Steepener\_CMS/Steepener\_CMS\_pricer.ipynb}: every number and figure of Section~\ref{sec:numerics} (figures saved in \texttt{Reports/CMS/figures/}).
+\end{itemize}
+\todo{Code excerpts: CMS replication, G2++ step covariance, Cheyette Euler step, LMM drift.}
+
+\section{Notation}
+\label{app:notation}
+\todo{Notation table.}
+
+% ===============================================================
+\begin{thebibliography}{99}
+\bibitem{andersenpiterbarg} L.~Andersen, V.~Piterbarg, \emph{Interest Rate Modeling}, Vols.~I--III, Atlantic Financial Press, 2010.
+\bibitem{brigomercurio} D.~Brigo, F.~Mercurio, \emph{Interest Rate Models -- Theory and Practice}, 2nd ed., Springer, 2006.
+\bibitem{hagan2003} P.~Hagan, Convexity conundrums: pricing CMS swaps, caps, and floors, \emph{Wilmott Magazine}, 2003.
+\bibitem{sabr} P.~Hagan, D.~Kumar, A.~Lesniewski, D.~Woodward, Managing smile risk, \emph{Wilmott Magazine}, 2002.
+\bibitem{cheyette} O.~Cheyette, Markov representation of the Heath--Jarrow--Morton model, BARRA, 1992.
+\bibitem{rebonato} R.~Rebonato, K.~McKay, R.~White, \emph{The SABR/LIBOR Market Model}, Wiley, 2009.
+\bibitem{hw2f} J.~Hull, A.~White, Numerical procedures for implementing term structure models II: two-factor models, \emph{Journal of Derivatives}, 1994.
+\end{thebibliography}
+
+\end{document}

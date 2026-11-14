@@ -85,3 +85,15 @@ python Produits/callable_range_accrual/download_data.py
 Elias Benguedda Lauzon — engineering student in applied mathematics (Mines Saint-Étienne)  
 [portfolio-eliasbenguedda.fr](https://portfolio-eliasbenguedda.fr) ·
 [LinkedIn](https://linkedin.com/in/elias-benguedda)
+
+
+## Next steps :
+
+We want to cover as many asset classes as possible and especially build structured products on each class of asset in order to have an overview of the different possibilities.
+
+* Steepener CMS
+* Range accrual on EURIBOR or other rate
+* Capped and floored floater
+* Autocall on rates
+* Callable step-up note
+* Zéro-coupon callable
