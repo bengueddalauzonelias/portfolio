@@ -17,3 +17,5 @@ __pycache__/
 
 # macOS
 .DS_Store
+# Crypto archives downloaded from data.binance.vision (re-downloaded by strategy/binance_data.py)
+Data/Crypto/raw/

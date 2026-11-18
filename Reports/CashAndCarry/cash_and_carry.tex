@@ -1,0 +1,510 @@
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+% Packages
+% ------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs, multirow}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage[section]{placeins}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
+
+% ------------------------------------------------------------------
+% Macros
+% ------------------------------------------------------------------
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\ind}{\mathbf{1}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+% Images extracted from the notebook by make_figures.py ; a framed placeholder is printed while a file is missing.
+\newcommand{\figfile}[2]{%
+  \IfFileExists{figures/#1}{\includegraphics[width=#2]{figures/#1}}%
+  {\fbox{\parbox[c][4cm][c]{#2}{\centering\small missing figure:\\ \texttt{figures/#1}}}}}
+
+\lstset{basicstyle=\ttfamily\footnotesize, keywordstyle=\color{blue!70!black}, commentstyle=\color{gray},
+        stringstyle=\color{teal}, frame=single, breaklines=true, language=Python, showstringspaces=false}
+
+% ------------------------------------------------------------------
+\title{Cash and Carry on Crypto Perpetual Futures:\\
+Funding, Timing and Allocation between BTC and ETH}
+\author{Elias Benguedda}
+\date{November 2026}
+
+\begin{document}
+\emergencystretch=3em
+\maketitle
+
+\begin{abstract}
+We study the cash and carry on crypto perpetual futures: long the spot, short the same quantity of the perpetual, so
+as to earn the funding rate paid every 8 hours by the longs to the shorts. The data are the public archives of
+Binance (no account needed) for BTC and ETH, from January 2020 to October 2026, on the 8-hour funding grid. The
+return of the position decomposes exactly into a funding part and a basis part, the latter telescoping over a
+holding period. Always invested, the carry earns 12.3\% a year on BTC and 14.6\% on ETH with a volatility below 2\%
+and a maximum drawdown of 2\%, but its yield has fallen from more than 30\% in 2021 to a few percent since 2025. The
+funding is persistent (autocorrelation 0.8 at 8 hours), yet a threshold on its expected value only adds 0.4 point a
+year, and a dynamic allocation between BTC and ETH, which adds 1.7 point to the 50/50 benchmark in sample, does not
+beat it out of sample (7.07\% against 7.48\% on 2023--2026). The fast signals earn a large basis gain without fees,
+which disappears with 2 basis points of fees per leg. With the spot as collateral of the short perpetual, the position
+is only liquidated if the index is multiplied by 18.
+\end{abstract}
+
+\clearpage
+\tableofcontents
+\newpage
+
+% ==================================================================
+\section{Introduction}
+% ==================================================================
+A perpetual future is a future without maturity. To keep its price close to the spot, the exchange makes the two
+sides pay each other a \emph{funding rate} at regular intervals: when the perpetual trades above the spot, the longs
+pay the shorts, and conversely. Since the demand for leveraged long positions usually exceeds the demand for short
+positions, the funding has been positive most of the time, at a level well above the money market rate.
+
+The \emph{cash and carry} captures it: buy the spot, sell the same quantity of perpetual. The position has no
+exposure to the price of the asset, and receives the funding as long as it is positive. This report measures what
+this simple strategy has earned on Binance since 2020, and whether it can be improved by leaving the market when the
+funding is low (a threshold strategy) or by allocating the capital between BTC and ETH according to their funding (a
+dynamic allocation). The scripts and the notebook are open source (Section~\ref{sec:implementation}).
+
+% ==================================================================
+\section{Perpetual futures and the funding rate}\label{sec:funding}
+% ==================================================================
+
+\subsection{Funding}
+On Binance USD-M perpetuals, the funding is exchanged every 8 hours, at 00:00, 08:00 and 16:00 UTC. At each funding
+time $t_k$, a position of $q$ units of perpetual pays
+\begin{equation}
+q\, F_{t_k}\, f_k
+\end{equation}
+to the other side if it is long, and receives it if it is short, $F$ being the mark price of the perpetual and $f_k$
+the funding rate. The rate is set from the premium of the perpetual over the index (a basket of spot prices), averaged
+over the funding interval:
+\begin{equation}
+f_k = P_k + \mathrm{clamp}\big(I - P_k,\ -0.05\%,\ 0.05\%\big), \qquad I = 0.01\%,
+\end{equation}
+where $P_k$ is the average premium index and $I$ an interest rate component of 0.01\% per 8 hours (10.95\% a year).
+When the premium is small, $f_k = I$: this is why a third of the payments are exactly 0.01\%. The rate is capped at
+$\pm 0.30\%$ per 8 hours for BTC.
+
+\subsection{Cash and carry}
+At $t_k$, the strategy invests one unit of capital: it buys $q = 1/S_k$ unit of spot and sells $q$ units of
+perpetual. Over $(t_k, t_{k+1}]$, its return is
+\begin{equation}
+r_{k+1} = \underbrace{\frac{f_{k+1}\, F_{k+1}}{S_k}}_{\text{funding}}
++ \underbrace{\frac{(S_{k+1} - S_k) - (F_{k+1} - F_k)}{S_k}}_{\text{basis}} .
+\label{eq:return}
+\end{equation}
+The price of the asset cancels out: only the funding received and the change of the basis $b = F - S$ remain. Over a
+holding period from $t_a$ to $t_b$, without rebalancing, the basis part telescopes to
+\begin{equation}
+q \sum_{k=a}^{b-1} \big[(S_{k+1} - S_k) - (F_{k+1} - F_k)\big] = q\,(b_a - b_b):
+\end{equation}
+the strategy gains the basis at the entry and gives back the basis at the exit. A strategy that enters when the
+perpetual is expensive and exits when it is cheap earns this difference on top of the funding.
+
+\subsection{Margin}
+Both legs are held on the same exchange in cross (portfolio) margin: the spot is the collateral of the short
+perpetual, valued with a haircut $h$, and the perpetual requires a maintenance margin $m$ of its notional. With a
+quantity $q$ fixed at the entry, the equity and the maintenance margin are
+\begin{equation}
+E_t = h\, q\, S_t + q\,(F_{\mathrm{entry}} - F_t) + \text{funding received}, \qquad M_t = m\, q\, F_t,
+\end{equation}
+and the position is liquidated when $E_t < M_t$. A rise of the index creates a loss on the perpetual which is covered
+by the spot. Without funding and with $F \approx S = x\, S_{\mathrm{entry}}$, the condition $E_t \ge M_t$ reads
+\begin{equation}
+h x + 1 - x \ge m x \iff x \le \frac{1}{1 - h + m},
+\end{equation}
+that is a multiple of 18.5 for $h = 95\%$ and $m = 0.4\%$. The funding received since the entry pushes the limit
+further.
+
+% ==================================================================
+\section{Data}\label{sec:data}
+% ==================================================================
+The data come from the public archives of Binance, \code{data.binance.vision}, which require no account and no API
+key: spot klines of BTCUSDT and ETHUSDT, klines and premium index of the USD-M perpetuals, and the history of the
+funding rates, from January 2020 to October 2026. The prices are taken at each funding time (open of the 8-hour kline
+starting at $t_k$), which gives 7{,}461 dates per symbol; 27 dates are missing from the archives (a few days of 2021)
+and are skipped. Table~\ref{tab:funding} and Figure~\ref{fig:funding} describe the funding.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+ & \textbf{BTCUSDT} & \textbf{ETHUSDT} \\
+\midrule
+Mean (\% p.a.) & 11.68 & 13.73 \\
+Median (\% p.a.) & 9.80 & 10.77 \\
+Standard deviation (\% p.a.) & 22.72 & 29.68 \\
+Negative payments (\%) & 13.95 & 13.83 \\
+Payments at exactly 0.01\% (\%) & 33.56 & 33.39 \\
+Maximum / minimum (\% per 8 hours) & $0.300$ / $-0.300$ & $0.375$ / $-0.356$ \\
+\midrule
+Autocorrelation at 8 hours / 1 day & 0.80 / 0.70 & 0.79 / 0.66 \\
+Autocorrelation at 1 week / 30 days & 0.47 / 0.33 & 0.45 / 0.32 \\
+\midrule
+Funding received in 2020 / 2021 (\%) & 17.2 / 30.7 & 27.5 / 37.4 \\
+2022 / 2023 (\%) & 4.1 / 7.9 & 0.8 / 8.2 \\
+2024 / 2025 / 2026 to October (\%) & 12.0 / 5.1 / 2.6 & 13.0 / 4.9 / 1.7 \\
+\bottomrule
+\end{tabular}
+\caption{Funding rates of the Binance perpetuals, January 2020 -- October 2026.}
+\label{tab:funding}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{funding.png}{\textwidth}
+\caption{Funding rates, annualised, and their 30-day mean.}
+\label{fig:funding}
+\end{figure}
+
+The funding is positive on average, around 12\% a year, but very unequal across the years: more than 30\% in 2021,
+almost nothing in 2022 and since 2025. It is also persistent, which is the condition for a timing strategy to work.
+The basis between the perpetual and the spot at the funding times is small: $-1.6$ bp on average for BTC, with a
+standard deviation of 5.8 bp and 99\% of the observations between $-8$ and $+15$ bp (Figure~\ref{fig:basis}).
+
+\begin{figure}[h]
+\centering
+\figfile{basis.png}{0.8\textwidth}
+\caption{Distribution of the basis perpetual / spot at the funding times.}
+\label{fig:basis}
+\end{figure}
+
+% ==================================================================
+\section{Benchmark: always invested}\label{sec:benchmark}
+% ==================================================================
+The benchmark holds the carry at all times, on BTC, on ETH, or half of the capital on each (Table~\ref{tab:benchmark},
+Figure~\ref{fig:benchmark}). The returns are compounded every 8 hours; the volatility and the Sharpe ratio are
+annualised with $3 \times 365$ periods a year, the Sharpe ratio being computed without risk-free rate.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \textbf{Return} & \textbf{Volatility} & \textbf{Sharpe} & \textbf{Max drawdown} & \textbf{Funding} & \textbf{Basis} \\
+ & (\% p.a.) & (\% p.a.) & & (\%) & (\% p.a.) & (\% p.a.) \\
+\midrule
+Always BTC & 12.33 & 1.49 & 7.8 & $-2.23$ & 11.67 & $-0.03$ \\
+Always ETH & 14.56 & 1.66 & 8.2 & $-2.01$ & 13.78 & $-0.18$ \\
+Always 50/50 & 13.44 & 1.39 & 9.1 & $-1.35$ & 12.73 & $-0.11$ \\
+\bottomrule
+\end{tabular}
+\caption{Benchmark, January 2020 -- October 2026, without fees.}
+\label{tab:benchmark}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{benchmark.png}{\textwidth}
+\caption{Benchmark: equity (log scale) and drawdown.}
+\label{fig:benchmark}
+\end{figure}
+
+The return is the funding: the basis contributes almost nothing over the whole period, since it telescopes. The
+volatility is very low, but the yield is not stable. On BTC, the carry earned 18.5\% in 2020 and 36.1\% in 2021, then
+4.2\% in 2022, 8.0\% in 2023, 12.8\% in 2024, 5.3\% in 2025 and 2.6\% from January to October 2026. The drawdowns come
+from the short periods of negative funding and from the moves of the basis in market crashes (March 2020, May 2021):
+the worst 8-hour return of the 50/50 benchmark is $-1.1\%$.
+
+% ==================================================================
+\section{Funding threshold}\label{sec:threshold}
+% ==================================================================
+
+\subsection{Signals}
+The threshold strategy holds the carry on a symbol only when its expected funding, known at $t_k$, is above an entry
+threshold, and keeps it while the expected funding stays above an exit threshold (hysteresis). Four estimators of the
+next funding are compared:
+\begin{itemize}
+\item \code{last}: the funding just paid at $t_k$;
+\item \code{mean}: the mean of the last 21 payments (one week);
+\item \code{ewm}: an exponentially weighted mean with a half-life of 21 payments;
+\item \code{premium}: the Binance formula applied to the premium index at $t_k$.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+\textbf{Strategy} & \textbf{Return} & \textbf{Vol.} & \textbf{Sharpe} & \textbf{Funding} & \textbf{Basis} & \textbf{Invested} & \textbf{Entries} \\
+ & (\% p.a.) & (\% p.a.) & & (\% p.a.) & (\% p.a.) & (\%) & \\
+\midrule
+Always 50/50 & 13.44 & 1.39 & 9.1 & 12.73 & $-0.11$ & 100.0 & 2 \\
+Threshold \code{last} & 14.33 & 1.30 & 10.4 & 12.97 & 0.43 & 88.5 & 679 \\
+Threshold \code{mean} & 13.51 & 1.35 & 9.4 & 12.71 & $-0.02$ & 87.3 & 39 \\
+Threshold \code{ewm} & 13.44 & 1.36 & 9.3 & 12.68 & $-0.06$ & 91.1 & 15 \\
+Threshold \code{premium} & 15.77 & 1.22 & 12.0 & 12.29 & 2.37 & 84.3 & 1{,}967 \\
+\bottomrule
+\end{tabular}
+\caption{Threshold strategies, half of the capital on each symbol, entry at 5\% p.a., exit at 0, without fees.}
+\label{tab:threshold}
+\end{table}
+
+With smoothed signals (\code{mean}, \code{ewm}), the threshold strategy trades a few dozen times in six years and
+earns the same return as the benchmark. With the fast signals (\code{last}, \code{premium}), it trades almost every
+day and earns a basis gain: it enters when the perpetual is expensive and exits when it is cheap, which the
+telescoping of the basis turns into a profit (2.4\% a year with the \code{premium} signal). This gain is made of a few
+basis points per trade (Section~\ref{sec:fees}).
+
+\subsection{Choice of the threshold}
+Figure~\ref{fig:threshold} and Table~\ref{tab:sweep} move the entry threshold of the \code{mean} strategy, the exit
+being at 0 (or at the entry when it is negative).
+
+\begin{figure}[h]
+\centering
+\figfile{threshold_sweep.png}{\textwidth}
+\caption{Threshold strategy (\code{mean} signal) as a function of the entry threshold.}
+\label{fig:threshold}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+\textbf{Entry (\% p.a.)} & \textbf{Return (\% p.a.)} & \textbf{Volatility (\% p.a.)} & \textbf{Sharpe} & \textbf{Invested (\%)} & \textbf{Entries} \\
+\midrule
+$-5$ & 13.72 & 1.37 & 9.43 & 99.6 & 30 \\
+0 & 13.84 & 1.36 & 9.58 & 95.7 & 72 \\
+2 & 13.75 & 1.36 & 9.54 & 92.7 & 50 \\
+5 & 13.51 & 1.35 & 9.42 & 87.3 & 39 \\
+8 & 12.89 & 1.34 & 9.07 & 78.5 & 28 \\
+11 & 11.58 & 1.33 & 8.31 & 53.9 & 15 \\
+15 & 10.99 & 1.31 & 7.99 & 51.8 & 12 \\
+20 & 10.26 & 1.30 & 7.53 & 42.6 & 11 \\
+30 & 8.91 & 1.28 & 6.73 & 29.8 & 9 \\
+\bottomrule
+\end{tabular}
+\caption{Threshold strategy (\code{mean} signal, exit at 0) as a function of the entry threshold, without fees.}
+\label{tab:sweep}
+\end{table}
+
+The best thresholds are close to zero: leaving the market only pays when the expected funding is negative. Higher
+thresholds leave the market too often and lose more positive funding than the negative periods they avoid, so both
+the return and the Sharpe ratio decrease. At its best, the threshold strategy adds 0.4 point a year to the benchmark:
+the negative funding periods are short, and their cost is small compared to the funding of the rest of the time.
+
+% ==================================================================
+\section{Dynamic allocation between BTC and ETH}\label{sec:dynamic}
+% ==================================================================
+The dynamic allocation puts all the capital, at each period, on the symbol with the highest expected funding among
+those above the entry threshold; the current symbol is only replaced if the other one is better by more than 2\% a
+year, to avoid switching back and forth, and the capital stays in cash when no symbol is eligible
+(Table~\ref{tab:dynamic}). The variant \code{equal} splits the capital between the eligible symbols.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+\textbf{Strategy} & \textbf{Return} & \textbf{Vol.} & \textbf{Sharpe} & \textbf{Max DD} & \textbf{Basis} & \textbf{Invested} & \textbf{Entries} \\
+ & (\% p.a.) & (\% p.a.) & & (\%) & (\% p.a.) & (\%) & \\
+\midrule
+Always 50/50 & 13.44 & 1.39 & 9.1 & $-1.35$ & $-0.11$ & 100.0 & 2 \\
+Always ETH & 14.56 & 1.66 & 8.2 & $-2.01$ & $-0.18$ & 100.0 & 1 \\
+Dynamic \code{last} & 17.96 & 1.68 & 9.9 & $-1.00$ & 1.72 & 87.6 & 1{,}178 \\
+Dynamic \code{mean} & 15.14 & 1.55 & 9.1 & $-1.04$ & $-0.04$ & 85.9 & 69 \\
+Dynamic \code{ewm} & 15.02 & 1.57 & 8.9 & $-1.04$ & $-0.20$ & 89.9 & 23 \\
+Dynamic \code{premium} & 21.97 & 1.62 & 12.3 & $-0.65$ & 6.00 & 83.1 & 2{,}022 \\
+Dynamic \code{mean}, \code{equal} & 13.92 & 1.38 & 9.5 & $-1.17$ & $-0.04$ & 87.3 & 61 \\
+\bottomrule
+\end{tabular}
+\caption{Dynamic allocation between BTC and ETH, entry at 5\% p.a., exit at 0, switching margin 2\% p.a., without
+fees.}
+\label{tab:dynamic}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\figfile{dynamic_equity.png}{\textwidth}
+\caption{Equity of the main strategies (log scale), without fees.}
+\label{fig:dynamic}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\figfile{allocation.png}{\textwidth}
+\caption{Dynamic allocation (\code{mean} signal): monthly average weights of BTC and ETH.}
+\label{fig:allocation}
+\end{figure}
+
+On the one-week mean, the allocation holds ETH 53\% of the time, BTC 33\% and cash 14\%, and follows the funding: 87\%
+ETH in 2020 and 2024, mostly BTC in 2022 and 2025 (Figure~\ref{fig:allocation}). It earns 15.1\% a year, 1.7 point
+more than the 50/50 benchmark, but only 0.6 point more than the always invested ETH position, which had the highest
+funding over the period: most of the gain is the choice of the asset with the higher average funding, not the timing.
+The \code{last} and \code{premium} signals earn a large basis gain (1.7\% and 6.0\% a year), the
+\code{premium} one reaching 22\% a year with a Sharpe ratio of 12, but with about one trade a day.
+
+% ==================================================================
+\section{Risk}\label{sec:risk}
+% ==================================================================
+
+\subsection{Worst periods}
+The worst 8-hour returns of the dynamic allocation (\code{mean} signal) all occur in market crashes, and come mostly
+from the basis, the perpetual falling less than the spot: $-1.00\%$ on 13 March 2020 (funding $-0.33\%$, basis
+$-0.67\%$), $-0.62\%$ on 21 December 2020 and on 19 May 2021. These losses are temporary when the position is held,
+since the basis converges back, but they are realised by a strategy that exits at that time.
+
+\subsection{Margin}
+Table~\ref{tab:margin} gives the lowest ratio of equity to maintenance margin (Section~\ref{sec:funding}) over the
+holding periods, with a haircut of 5\% on the spot and a maintenance margin of 0.4\%.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Position} & \textbf{Minimum equity / maintenance} & \textbf{Date} \\
+\midrule
+Always BTC (held from January 2020) & 50.3 & 2021-01-08 \\
+Always ETH (held from January 2020) & 29.5 & 2021-05-12 \\
+Dynamic \code{mean}, BTC & 168.4 & 2026-09-22 \\
+Dynamic \code{mean}, ETH & 93.0 & 2021-05-12 \\
+\bottomrule
+\end{tabular}
+\caption{Lowest margin ratio over the holding periods (liquidation below 1).}
+\label{tab:margin}
+\end{table}
+
+The ETH position held from January 2020 went through a 33-fold rise of ETH until May 2021, beyond the multiple of
+18.5 of Section~\ref{sec:funding}: without funding, the loss of the perpetual would have exceeded the value of the
+spot collateral. It still stays 29 times above its maintenance margin, because the funding received over 2020--2021,
+paid on a notional that grows with the price, covers the loss. A position entered just before a strong rise, without
+this accumulated funding, would be closer to the limit, which remains a rise of the index by a factor 18. With the spot as collateral, the risk of
+the strategy is not the liquidation, but the exchange that holds both legs (a default or a freeze of the withdrawals),
+and the stablecoin in which the funding is received.
+
+% ==================================================================
+\section{Trading fees}\label{sec:fees}
+% ==================================================================
+The base case has no fees. Table~\ref{tab:fees} adds proportional fees paid on each leg at each change of position;
+for comparison, the standard Binance taker fees are 10 bp on the spot and 5 bp on the perpetual, the maker fees being
+lower.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Fee per leg} & \textbf{0 bp} & \textbf{1 bp} & \textbf{2 bp} & \textbf{5 bp} & \textbf{10 bp} \\
+\midrule
+Always 50/50 & 13.44 & 13.44 & 13.43 & 13.42 & 13.41 \\
+Threshold \code{mean} & 13.51 & 13.39 & 13.26 & 12.89 & 12.26 \\
+Threshold \code{ewm} & 13.44 & 13.39 & 13.34 & 13.20 & 12.97 \\
+Dynamic \code{mean} & 15.14 & 14.68 & 14.23 & 12.86 & 10.61 \\
+Dynamic \code{ewm} & 15.02 & 14.87 & 14.72 & 14.27 & 13.51 \\
+Dynamic \code{last} & 17.96 & 10.11 & 2.77 & $-16.43$ & $-40.84$ \\
+Dynamic \code{premium} & 21.97 & 8.36 & $-3.73$ & $-32.51$ & $-62.69$ \\
+\bottomrule
+\end{tabular}
+\caption{Annual return (\%) as a function of the fee paid on each leg at each change of position.}
+\label{tab:fees}
+\end{table}
+
+The fast signals do not survive fees: 2 bp per leg are enough to wipe out the \code{last} signal, and the
+\code{premium} signal loses money. The basis gain that they capture is smaller than the cost of crossing the
+bid-ask spread twice on two legs. The slow strategies lose 0.2 to 2 points a year at 5 bp: with fees, the dynamic
+allocation on the exponential mean (14.27\%) still beats the 50/50 benchmark (13.42\%), but not the always invested ETH
+position (14.54\%).
+
+% ==================================================================
+\section{Out-of-sample test}\label{sec:oos}
+% ==================================================================
+The estimator and the entry threshold of the dynamic allocation are chosen on 2020--2022 by the Sharpe ratio, with
+fees of 5 bp per leg, then the strategy is run on 2023--2026 (Table~\ref{tab:oos}).
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+\textbf{Signal} & \textbf{Entry} & \textbf{In-sample Sharpe} & \textbf{In-sample return} & \textbf{Out-of-sample Sharpe} & \textbf{Out-of-sample return} \\
+ & (\% p.a.) & & (\% p.a.) & & (\% p.a.) \\
+\midrule
+\code{mean} & 0 & 8.56 & 21.95 & 6.38 & 5.72 \\
+\code{mean} & 5 & 8.64 & 21.97 & 7.63 & 6.20 \\
+\code{mean} & 8 & 8.79 & 22.04 & 8.62 & 6.26 \\
+\code{ewm} & 0 & 9.70 & 24.47 & 9.17 & 6.95 \\
+\textbf{\code{ewm}} & \textbf{2} & \textbf{9.70} & \textbf{24.45} & \textbf{9.56} & \textbf{7.07} \\
+\code{ewm} & 5 & 9.61 & 24.11 & 10.17 & 7.10 \\
+\code{ewm} & 11 & 9.59 & 23.75 & 10.36 & 6.80 \\
+\midrule
+\multicolumn{4}{@{}l}{Always 50/50, out of sample} & 12.80 & 7.48 \\
+\multicolumn{4}{@{}l}{Always ETH, out of sample} & & 7.51 \\
+\bottomrule
+\end{tabular}}
+\caption{Dynamic allocation chosen on 2020--2022 (in bold) and tested on 2023--2026, fees of 5 bp per leg.}
+\label{tab:oos}
+\end{table}
+
+The parameters chosen in sample earn 7.07\% a year out of sample, against 7.48\% for the 50/50 benchmark and 7.51\% for
+the always invested ETH position, with a lower Sharpe ratio (9.6 against 12.8). Over 2023--2026, the funding was lower
+and more stable than in 2020--2022, and staying invested was the best choice: the timing does not add value out of
+sample.
+
+% ==================================================================
+\section{Implementation}\label{sec:implementation}
+% ==================================================================
+\begin{itemize}
+\item \code{strategy/binance\_data.py}: download of the Binance public archives (monthly archives, then daily
+archives for the current month), with retries, cache in \code{Data/Crypto} and alignment on the 8-hour funding grid
+(the spot timestamps are in microseconds since 2025, the funding times a few milliseconds after the hour);
+\item \code{strategy/cash\_and\_carry.py}: returns \eqref{eq:return}, signals, positions (always invested, threshold
+with hysteresis, dynamic allocation), backtest with optional fees and cash rate, margin ratio and statistics;
+\item \code{strategy/cash\_and\_carry.ipynb}: every number and figure of this report;
+\item \code{Reports/CashAndCarry/make\_figures.py}: extracts the figures from the executed notebook.
+\end{itemize}
+
+\begin{lstlisting}
+from binance_data import load_panels
+import cash_and_carry as cc
+
+panels = load_panels(("BTCUSDT", "ETHUSDT"), start="2020-01-01")       # public data, no account
+signals = pd.concat({s: cc.funding_signal(panels[s], "ewm", window=21) for s in panels}, axis=1)
+weights = cc.dynamic_allocation(signals, entry=0.02, exit=0.0, mode="best", switch=0.02)
+result = cc.backtest(panels, weights, fees=(0.0005, 0.0005))
+print(cc.performance(result, weights))
+\end{lstlisting}
+
+The first download takes about two minutes; afterwards the whole notebook runs in about 15 seconds.
+
+% ==================================================================
+\section{Limitations and Next Steps}\label{sec:limitations}
+% ==================================================================
+\begin{itemize}
+\item \emph{Yield of the capital.} The capital is in stablecoins and earns nothing here, nor does the cash of the
+timing strategies. With a USD risk-free rate of 4 to 5\% since 2023, the excess return of the carry over the money
+market has been small, and the comparison with a cash rate is the next step.
+\item \emph{Execution.} Prices are taken at the funding times on 8-hour klines; the fees are proportional, without
+bid-ask spread, market impact or slippage between the two legs.
+\item \emph{Single exchange.} Both legs are on Binance. The funding differs across exchanges (Bybit, OKX, Hyperliquid),
+and an allocation between them is a natural extension, with the cost of moving the collateral and the counterparty
+risk of each exchange.
+\item \emph{Margin.} The haircut and the maintenance margin are constant; in practice they depend on the size of the
+position and on the exchange, and the unrealised loss of the perpetual must be settled in stablecoins.
+\item \emph{Universe.} Only BTC and ETH: the funding of the altcoins is higher and more volatile, with liquidity and
+delisting risks.
+\end{itemize}
+
+% ==================================================================
+\section{Conclusion}
+% ==================================================================
+The cash and carry on Binance perpetuals has earned the funding, 12\% a year on BTC and 14\% on ETH since 2020, with a
+volatility below 2\%: a yield well above the money market, but concentrated in 2020--2021 and 2024, and down to a few
+percent since 2025. The funding is persistent, yet the timing adds little: a threshold on the expected funding adds
+0.4 point a year at best, the dynamic allocation between BTC and ETH mostly captures the higher average funding of
+ETH, and the strategy chosen on 2020--2022 underperforms the benchmark on 2023--2026. The fast signals earn a large
+basis gain which trading fees wipe out. With the spot as collateral, the liquidation risk is negligible, and the main
+risks of the strategy are the exchange, the regimes of low funding and the opportunity cost of the capital.
+
+\end{document}
