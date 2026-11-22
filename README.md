@@ -97,3 +97,5 @@ We want to cover as many asset classes as possible and especially build structur
 * Autocall on rates
 * Callable step-up note
 * Zéro-coupon callable
+* Dupire model calibration and implementation
+* Asian options
