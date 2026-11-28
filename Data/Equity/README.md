@@ -7,6 +7,7 @@ Prices are in EUR, dates are Euronext Paris trading days (ISO).
 |---|---|---|---|
 | `LVMH_HERMES_Daily.csv` | daily close of LVMH (`MC.PA`) and Hermès (`RMS.PA`): raw close (`*_Close`) and close adjusted for dividends and splits (`*_AdjClose`) | Yahoo Finance (`yfinance`) | 2005-01-03 → |
 | `LVMH_HERMES_Dividends.csv` | cash dividends per share, by ex-date | Yahoo Finance | 2005 → |
+| `Universe_Daily_AdjClose.csv` | adjusted close of 23 Euronext Paris large caps (test of constant correlation, `Models/Correlation/constant_correlation.ipynb`) ; downloaded by `python Data/Equity/download_universe.py`, date in `LAST_DOWNLOAD_UNIVERSE.txt` | Yahoo Finance (`yfinance`) | 2005-01-03 → (Legrand 2006-04-07 →) |
 
 ## Notes
 
@@ -17,3 +18,5 @@ Prices are in EUR, dates are Euronext Paris trading days (ISO).
   no need for the multi-day returns used for pairs listed on different time zones.
 - **Yahoo Finance** is free but unofficial and its history can be revised; the files are frozen in the repository so
   that the results of the notebook are reproducible.
+- **Universe.** AXA and Engie are left out of the universe : Yahoo has stale AXA prices in 2005-2007 (≈ 180 days a
+  year with a zero return) and a pre-merger (Gaz de France) series for Engie before 2008.
